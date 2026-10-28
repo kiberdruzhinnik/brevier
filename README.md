@@ -57,7 +57,7 @@ anyone else, or older than what you have, is refused. The key's fingerprint:
 
 Each release also has the
 same app as one file,
-[`brevier.flatpak`](https://github.com/gurov/brevier/releases/download/v0.17.0/brevier.flatpak)
+[`brevier.flatpak`](https://github.com/gurov/brevier/releases/download/v0.18.0/brevier.flatpak)
 (`flatpak install --user ./brevier.flatpak`). Files released after 0.14.0 update from the
 repository as well; Brevier installed from an older one does not — run
 `flatpak uninstall --user io.github.gurov.brevier` (your data stays) and install it again
@@ -72,8 +72,8 @@ local files (a `.md`, a saved feed) can't be opened.
 Ubuntu) and no wish for a sandbox:
 
 ```sh
-tar xf brevier-0.17.0-x86_64-linux.tar.gz
-cd brevier-0.17.0-x86_64-linux && ./install.sh
+tar xf brevier-0.18.0-x86_64-linux.tar.gz
+cd brevier-0.18.0-x86_64-linux && ./install.sh
 ```
 
 `install.sh` installs into `~/.local`, needs no root, and `--uninstall` removes it again.
@@ -92,18 +92,18 @@ tested with. No desktop entry or icon is installed this way;
 needs no GTK: `cargo install --locked brevier --features save`.
 
 **Windows** 10 or 11, 64-bit. Download
-[`brevier-0.17.0-windows-x86_64-setup.exe`](https://github.com/gurov/brevier/releases/download/v0.17.0/brevier-0.17.0-windows-x86_64-setup.exe)
+[`brevier-0.18.0-windows-x86_64-setup.exe`](https://github.com/gurov/brevier/releases/download/v0.18.0/brevier-0.18.0-windows-x86_64-setup.exe)
 and run it. It installs for you alone, with no administrator rights, and puts Brevier in the
 Start menu; remove it under Installed apps. The installer is not signed yet, so Windows
 shows "Windows protected your PC" first: choose **More info**, then **Run anyway**. To run
 Brevier without installing it, unpack
-[`brevier-0.17.0-windows-x86_64.zip`](https://github.com/gurov/brevier/releases/download/v0.17.0/brevier-0.17.0-windows-x86_64.zip)
+[`brevier-0.18.0-windows-x86_64.zip`](https://github.com/gurov/brevier/releases/download/v0.18.0/brevier-0.18.0-windows-x86_64.zip)
 anywhere and start `bin\brevier-ui.exe`; `bin\brevier.exe` is the command line.
 
 **Android** 7.0 or later, 64-bit ARM. Install it from
 [F-Droid](https://f-droid.org/packages/io.github.gurov.brevier/), which keeps it up to
 date. Or download
-[`brevier-0.17.0-arm64.apk`](https://github.com/gurov/brevier/releases/download/v0.17.0/brevier-0.17.0-arm64.apk)
+[`brevier-0.18.0-arm64.apk`](https://github.com/gurov/brevier/releases/download/v0.18.0/brevier-0.18.0-arm64.apk)
 on the phone and open it; Android asks once to allow installs from the app you opened it
 with. Updates install over it as long as they are signed with the same release key:
 
@@ -174,7 +174,7 @@ brevier --save <url>                    # save to a file instead of stdout
 brevier brevier:history                 # what you have read, by day
 brevier brevier:archive                 # a copy of every article you read
 brevier "brevier:archive?q=latency"     # …searched for words
-brevier brevier:archive/<host>/<file>   # one copy, printed as `lz4 -d` would
+brevier brevier:archive/<host>/<file>   # one copy, printed as plain Markdown
 brevier brevier:wayback/<url>           # the Wayback Machine's latest good copy
 brevier "borrow checker"                # not an address: a search
 brevier "?danluu.com"                   # a leading ? searches for anything
@@ -207,7 +207,7 @@ it, and the findings by stage, each with what to change](assets/screenshot-check
 In CI it is a GitHub Action:
 
 ```yaml
-- uses: gurov/brevier@v0.17.0  # a release tag, or @main
+- uses: gurov/brevier@v0.18.0  # a release tag, or @main
   with:
     urls: |
       https://example.com/
@@ -227,6 +227,7 @@ The reports go to the job summary; the lowest score is the step's `score` output
 | arrows, `Home` / `End` | line, top, bottom |
 | `Tab` / `Shift+Tab` | mark the next / previous link |
 | `Enter` / `Ctrl+Enter` on a marked link | follow it / open it in a new tab |
+| `Alt+←` / `Alt+→` | back / forward |
 | `Ctrl+L` | go to the address bar |
 | `Ctrl+R`, `F5` | reload, downloading the page afresh |
 | `Ctrl+T` / `Ctrl+W` | new tab / close tab |
@@ -289,8 +290,9 @@ where it goes. Settings, history and bookmarks are in the menu at the top right.
 - **A new tab shows the five pages you read last.**
 - **Tabs come back** after you close the window; only the visible one loads at start.
 - **History and bookmarks**, and the address bar suggests pages you have read.
-- **Every article you read is kept as your copy**, a compressed Markdown file, so you can
-  read and search it after the site has changed or gone. The history links each page to
+- **Every article you read is kept as your copy**, a Markdown file, so you can read and
+  search it after the site has changed or gone; compressed, or plain `.md` for other
+  programs to open. The history links each page to
   its copy; a bookmark keeps its copy for good. **Search what you've read** is in the menu
   (`Ctrl+Shift+F`), and `brevier:archive` lists every copy.
 
@@ -369,8 +371,7 @@ text — not in a WebView — with the same typography and colours as the window
 - **The bar slides away while you read**: it follows your finger up and down without moving
   the text, and stays put at the top and end of a page, on short pages, while you type,
   search or select, and with TalkBack or Switch Access on. A setting keeps it in place.
-- With a keyboard attached, the window's shortcuts work, and `Alt+←` / `Alt+→` go back and
-  forward.
+- With a keyboard attached, the window's shortcuts work, `Alt+←` / `Alt+→` included.
 
 The maintainer uses it every day. It hasn't been tested with TalkBack yet.
 
@@ -437,7 +438,11 @@ History, open tabs and bookmarks are plain text, one line per entry:
 
 The archive holds one file per page, `<host>/<date>-<title>.md.lz4`: Markdown with a short
 header (title, address, when you read it), compressed in the standard LZ4 format, so
-`lz4 -d` opens it without Brevier. A copy stays as long as its line in the history, and a
+`lz4 -d` opens it without Brevier. **Keep the copies as plain files**, in Settings, writes
+new copies as plain `.md` instead, which Obsidian, desktop search or another reader open as
+they are, at about twice the space; the copies kept before stay as they were, and Brevier
+reads both. On the phone copies stay compressed: no other app can see the app's own
+folder anyway. A copy stays as long as its line in the history, and a
 bookmarked page, and a page with notes, keeps its latest copy for good, even through
 **Forget everything**. A switch
 in Settings stops new copies.
