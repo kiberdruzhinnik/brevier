@@ -1,0 +1,8 @@
+{
+  "status": 200,
+  "body": {
+    "weblink_get": [
+      { "url": "https://download.cldmail.ru/disk/public/" }
+    ]
+  }
+}

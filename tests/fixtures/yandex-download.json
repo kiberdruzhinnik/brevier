@@ -1,0 +1,5 @@
+{
+  "href": "https://downloader.disk.yandex.ru/disk/public/example?token=temporary",
+  "method": "GET",
+  "templated": false
+}

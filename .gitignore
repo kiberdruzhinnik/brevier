@@ -17,3 +17,9 @@
 /packaging/dist/
 /*.flatpak
 /NOTES.md
+
+# custom
+.build-tools
+.rustup
+.cargo
+.gradle

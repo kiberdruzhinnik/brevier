@@ -54,6 +54,8 @@ pub mod page;
 /// Цвета страницы: бумага, краска, ссылка, подсветка кода. Часть
 /// типографики, а не оформления окна, — поэтому в ядре.
 pub mod palette;
+/// Text extraction from local PDF bytes, shared by public cloud-drive hosts.
+pub mod pdf;
 /// Прогресс чтения (#19): что прочитано и где остановились. Считается по
 /// модели страницы, поэтому живёт рядом с ней — cli он не нужен.
 #[cfg(all(feature = "images", feature = "typeset"))]

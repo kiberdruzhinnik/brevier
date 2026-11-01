@@ -1,0 +1,11 @@
+{
+  "status": 200,
+  "body": {
+    "type": "folder",
+    "name": "Articles",
+    "list": [
+      { "type": "file", "name": "Research.pdf", "weblink": "fixture/share/Research.pdf" },
+      { "type": "folder", "name": "Notes", "weblink": "fixture/share/Notes" }
+    ]
+  }
+}

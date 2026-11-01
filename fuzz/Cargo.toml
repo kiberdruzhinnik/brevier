@@ -49,6 +49,20 @@ doc = false
 bench = false
 
 [[bin]]
+name = "yandex_disk"
+path = "fuzz_targets/yandex_disk.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cloud_mail"
+path = "fuzz_targets/cloud_mail.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "address"
 path = "fuzz_targets/address.rs"
 test = false

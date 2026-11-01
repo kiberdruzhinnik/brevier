@@ -1,0 +1,10 @@
+{
+  "type": "dir",
+  "name": "Books & Papers",
+  "_embedded": {
+    "items": [
+      { "type": "file", "name": "Children & Us.pdf", "path": "/Books/Children & Us.pdf", "mime_type": "application/pdf" },
+      { "type": "dir", "name": "Subfolder", "path": "/Books/Subfolder" }
+    ]
+  }
+}

@@ -160,45 +160,102 @@ pub fn fetch(url: &str, ua: UserAgent) -> Result<Page, Error> {
 /// с ней. `--check`, `--raw`, `--html`, `--links` и `--nav` сюда не ходят —
 /// им нужен сам HTML, а не его замена.
 pub fn readable(url: &str, ua: UserAgent) -> Result<Page, Error> {
-    // Cloud Mail file links open a JavaScript viewer. Resolve their public
-    // download shard and extract PDF text locally instead.
-    if let Some(api) = crate::hosts::cloud_mail::pdf_api(url) {
-        let metadata = binary(&api, ua, "application/json", MAX_BODY)?;
-        let metadata = String::from_utf8_lossy(&metadata.bytes);
-        if let Some(title) = crate::hosts::cloud_mail::pdf_name(&metadata) {
-            let dispatcher = binary(
-                &crate::hosts::cloud_mail::dispatcher_api(),
-                ua,
-                "application/json",
-                MAX_BODY,
-            )?;
-            let dispatcher = String::from_utf8_lossy(&dispatcher.bytes);
-            let direct = crate::hosts::cloud_mail::download_url(url, &dispatcher)
-                .ok_or(Error::EmptyExtraction)?;
-            let pdf = binary(&direct, ua, "application/pdf", MAX_BODY)?;
-            let body = crate::hosts::cloud_mail::pdf_markdown(&pdf.bytes, &title)
-                .ok_or(Error::EmptyExtraction)?;
-            return Ok(Page {
-                url: url.to_owned(),
-                kind: ContentKind::Text,
-                body,
-                redirects: 0,
-            });
+    // Cloud Mail public shares are JavaScript shells. Ask the file API first
+    // because its metadata carries a filename even when the URL has no suffix;
+    // folders then use the listing API below.
+    if let Some(api) = crate::hosts::cloud_mail::file_api(url) {
+        if let Ok(metadata) = binary(&api, ua, "application/json", MAX_BODY) {
+            let metadata = String::from_utf8_lossy(&metadata.bytes);
+            if let Some(resource) = crate::hosts::cloud_mail::resource(&metadata, url) {
+                match resource {
+                    crate::hosts::cloud_mail::Resource::Pdf(title) => {
+                        let dispatcher = binary(
+                            &crate::hosts::cloud_mail::dispatcher_api(),
+                            ua,
+                            "application/json",
+                            MAX_BODY,
+                        )?;
+                        let dispatcher = String::from_utf8_lossy(&dispatcher.bytes);
+                        let direct = crate::hosts::cloud_mail::download_url(url, &dispatcher)
+                            .ok_or(Error::EmptyExtraction)?;
+                        let pdf = binary(&direct, ua, "application/pdf", MAX_BODY)?;
+                        let body = crate::pdf::markdown(&pdf.bytes, &title)
+                            .ok_or(Error::EmptyExtraction)?;
+                        return Ok(Page {
+                            url: url.to_owned(),
+                            kind: ContentKind::Text,
+                            body,
+                            redirects: 0,
+                        });
+                    }
+                    crate::hosts::cloud_mail::Resource::Unsupported(mime) => {
+                        return Err(Error::UnsupportedContentType(mime));
+                    }
+                    crate::hosts::cloud_mail::Resource::Folder(body) => {
+                        return Ok(Page {
+                            url: url.to_owned(),
+                            kind: ContentKind::Feed,
+                            body,
+                            redirects: 0,
+                        });
+                    }
+                }
+            }
         }
-    }
-    // Cloud Mail's public pages are an empty JavaScript shell; its public
-    // folder API is the read-only request that supplies the visible listing.
-    if let Some(api) = crate::hosts::cloud_mail::folder_api(url)
-        && let Ok(response) = binary(&api, ua, "application/json", MAX_BODY)
-        && let Ok(json) = String::from_utf8(response.bytes)
-        && let Some(body) = crate::hosts::cloud_mail::atom(&json, url)
-    {
+        let folder_api = crate::hosts::cloud_mail::folder_api(url).ok_or(Error::EmptyExtraction)?;
+        let folder = binary(&folder_api, ua, "application/json", MAX_BODY)?;
+        let folder = String::from_utf8_lossy(&folder.bytes);
+        let body = match crate::hosts::cloud_mail::resource(&folder, url) {
+            Some(crate::hosts::cloud_mail::Resource::Folder(body)) => body,
+            Some(
+                crate::hosts::cloud_mail::Resource::Pdf(_)
+                | crate::hosts::cloud_mail::Resource::Unsupported(_),
+            )
+            | None => return Err(Error::EmptyExtraction),
+        };
         return Ok(Page {
             url: url.to_owned(),
             kind: ContentKind::Feed,
             body,
             redirects: 0,
         });
+    }
+    // Yandex Disk shares identify files through public metadata because the
+    // share URL itself does not carry a trustworthy filename or media type.
+    if let Some(api) = crate::hosts::yandex_disk::metadata_api(url) {
+        let metadata = binary(&api, ua, "application/json", MAX_BODY)?;
+        let metadata = String::from_utf8_lossy(&metadata.bytes);
+        match crate::hosts::yandex_disk::resource(&metadata, url) {
+            Some(crate::hosts::yandex_disk::Resource::Folder(body)) => {
+                return Ok(Page {
+                    url: url.to_owned(),
+                    kind: ContentKind::Feed,
+                    body,
+                    redirects: 0,
+                });
+            }
+            Some(crate::hosts::yandex_disk::Resource::Pdf(title)) => {
+                let api =
+                    crate::hosts::yandex_disk::download_api(url).ok_or(Error::EmptyExtraction)?;
+                let response = binary(&api, ua, "application/json", MAX_BODY)?;
+                let response = String::from_utf8_lossy(&response.bytes);
+                let direct = crate::hosts::yandex_disk::download_url(&response)
+                    .ok_or(Error::EmptyExtraction)?;
+                let pdf = binary(&direct, ua, "application/pdf", MAX_BODY)?;
+                let body =
+                    crate::pdf::markdown(&pdf.bytes, &title).ok_or(Error::EmptyExtraction)?;
+                return Ok(Page {
+                    url: url.to_owned(),
+                    kind: ContentKind::Text,
+                    body,
+                    redirects: 0,
+                });
+            }
+            Some(crate::hosts::yandex_disk::Resource::Unsupported(mime)) => {
+                return Err(Error::UnsupportedContentType(mime));
+            }
+            None => return Err(Error::EmptyExtraction),
+        }
     }
     // Читалка книги (#20): порцию текста берём отдельным запросом, как её
     // берёт скрипт сайта.

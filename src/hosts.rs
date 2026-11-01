@@ -42,6 +42,7 @@ pub mod hacker_news;
 pub mod lobsters;
 pub mod rustdoc;
 mod thread;
+pub mod yandex_disk;
 
 pub use thread::Page;
 
