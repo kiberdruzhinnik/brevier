@@ -12,6 +12,13 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     let text = String::from_utf8_lossy(rest);
+    let parsed = notes::parse(&text);
+    let parsed_refs: Vec<_> = parsed.iter().collect();
+    let _ = notes::entries(&parsed_refs, "images");
+    let _ = notes::appended(&text, &parsed_refs);
+    let _ = notes::digest(&parsed_refs);
+    let _ = notes::digest_pages(&[parsed_refs]);
+
     let total = text.chars().count();
     let from = u16::from_le_bytes([head[0], head[1]]) as usize % (total + 1);
     let to = from + u16::from_le_bytes([head[2], head[3]]) as usize % 256;
@@ -32,6 +39,7 @@ fuzz_target!(|data: &[u8]| {
         quote: selection.quote,
         after: selection.after,
         text: String::new(),
+        pictures: Vec::new(),
     };
     let spots = notes::place(&text, &[&note]);
     let placed = spots[0].place;

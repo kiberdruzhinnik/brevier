@@ -35,8 +35,9 @@
           and the project's documentation</li>
       <li>A copy of every article you read, kept and searchable after the site has
           changed or gone, and long reads that offer to continue where you stopped</li>
-      <li>Notes on a page: highlights and a few words of your own, back in place when
-          the page is opened again</li>
+      <li>Notes on a page: highlights, a few words and pictures of your own, in a
+          margin beside the text, back in place when the page is opened again and
+          exported as Markdown</li>
       <li>Feeds and search as lists of links; Hacker News, Lobsters and Discourse
           forums as threads, and Habr articles with their comments</li>
       <li>Tabs that survive closing the window, history, bookmarks, and page search</li>
@@ -97,6 +98,31 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.19.2" date="2026-10-30" type="development">
+      <description>
+        <p>The Android app now targets Android 16, as Google Play
+          requires; back and the back gesture work as before. Saved
+          archives are written with a newer zip library.</p>
+      </description>
+    </release>
+    <release version="0.19.1" date="2026-10-29" type="development">
+      <description>
+        <p>The notes margin no longer keeps a wide window from being made
+          narrower: the notes move under their paragraphs instead. A page
+          without notes keeps its column in the middle, and the shelf no
+          longer grows wide by itself.</p>
+      </description>
+    </release>
+    <release version="0.19.0" date="2026-10-29" type="development">
+      <description>
+        <p>Notes stand in a margin beside the text, each level with its
+          passage and joined to it by a thin line, or under their paragraph
+          where there is no room; Ctrl+Shift+M hides them, Ctrl+Alt+M writes
+          one. A note can hold pictures of your own, pasted, dropped or picked
+          from a file. Notes export as Markdown that Obsidian reads, each quote
+          linked to its place on the page.</p>
+      </description>
+    </release>
     <release version="0.18.0" date="2026-10-28" type="development">
       <description>
         <p>Alt+Left and Alt+Right go back and forward, from the article and

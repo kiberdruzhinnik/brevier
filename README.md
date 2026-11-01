@@ -9,6 +9,7 @@ computer, and sets it in the typography you chose — not the one the site chose
 
 - **Articles** without scripts, site styles, pop-ups or ads.
 - **PDFs shared publicly in Cloud Mail** as clean text in your chosen type.
+- **Public Yandex Disk shares** as readable folders and PDFs in your chosen type.
 - **Documentation** straight from git repositories: `gh:owner/repo` opens its README.
 - **Feeds** — RSS, Atom and JSON Feed — as lists of links.
 - **Search** from the address bar.
@@ -57,7 +58,7 @@ anyone else, or older than what you have, is refused. The key's fingerprint:
 
 Each release also has the
 same app as one file,
-[`brevier.flatpak`](https://github.com/gurov/brevier/releases/download/v0.18.0/brevier.flatpak)
+[`brevier.flatpak`](https://github.com/gurov/brevier/releases/download/v0.19.2/brevier.flatpak)
 (`flatpak install --user ./brevier.flatpak`). Files released after 0.14.0 update from the
 repository as well; Brevier installed from an older one does not — run
 `flatpak uninstall --user io.github.gurov.brevier` (your data stays) and install it again
@@ -72,8 +73,8 @@ local files (a `.md`, a saved feed) can't be opened.
 Ubuntu) and no wish for a sandbox:
 
 ```sh
-tar xf brevier-0.18.0-x86_64-linux.tar.gz
-cd brevier-0.18.0-x86_64-linux && ./install.sh
+tar xf brevier-0.19.2-x86_64-linux.tar.gz
+cd brevier-0.19.2-x86_64-linux && ./install.sh
 ```
 
 `install.sh` installs into `~/.local`, needs no root, and `--uninstall` removes it again.
@@ -92,18 +93,18 @@ tested with. No desktop entry or icon is installed this way;
 needs no GTK: `cargo install --locked brevier --features save`.
 
 **Windows** 10 or 11, 64-bit. Download
-[`brevier-0.18.0-windows-x86_64-setup.exe`](https://github.com/gurov/brevier/releases/download/v0.18.0/brevier-0.18.0-windows-x86_64-setup.exe)
+[`brevier-0.19.2-windows-x86_64-setup.exe`](https://github.com/gurov/brevier/releases/download/v0.19.2/brevier-0.19.2-windows-x86_64-setup.exe)
 and run it. It installs for you alone, with no administrator rights, and puts Brevier in the
 Start menu; remove it under Installed apps. The installer is not signed yet, so Windows
 shows "Windows protected your PC" first: choose **More info**, then **Run anyway**. To run
 Brevier without installing it, unpack
-[`brevier-0.18.0-windows-x86_64.zip`](https://github.com/gurov/brevier/releases/download/v0.18.0/brevier-0.18.0-windows-x86_64.zip)
+[`brevier-0.19.2-windows-x86_64.zip`](https://github.com/gurov/brevier/releases/download/v0.19.2/brevier-0.19.2-windows-x86_64.zip)
 anywhere and start `bin\brevier-ui.exe`; `bin\brevier.exe` is the command line.
 
 **Android** 7.0 or later, 64-bit ARM. Install it from
 [F-Droid](https://f-droid.org/packages/io.github.gurov.brevier/), which keeps it up to
 date. Or download
-[`brevier-0.18.0-arm64.apk`](https://github.com/gurov/brevier/releases/download/v0.18.0/brevier-0.18.0-arm64.apk)
+[`brevier-0.19.2-arm64.apk`](https://github.com/gurov/brevier/releases/download/v0.19.2/brevier-0.19.2-arm64.apk)
 on the phone and open it; Android asks once to allow installs from the app you opened it
 with. Updates install over it as long as they are signed with the same release key:
 
@@ -207,7 +208,7 @@ it, and the findings by stage, each with what to change](assets/screenshot-check
 In CI it is a GitHub Action:
 
 ```yaml
-- uses: gurov/brevier@v0.18.0  # a release tag, or @main
+- uses: gurov/brevier@v0.19.2  # a release tag, or @main
   with:
     urls: |
       https://example.com/
@@ -236,6 +237,8 @@ The reports go to the job summary; the lowest score is the step's `score` output
 | `Ctrl+H` | history |
 | `Ctrl+Shift+F` | search what you've read |
 | `Ctrl+D` | bookmark the page, or remove the bookmark |
+| `Ctrl+Alt+M` | write a note on the selected passage |
+| `Ctrl+Shift+M` | show or hide notes beside the text |
 | `Ctrl++` / `Ctrl+-` / `Ctrl+0`, `Ctrl`+wheel | zoom in / out / reset |
 | `Ctrl+S` | save the article |
 | `Ctrl+O` | open the page in your other browser |
@@ -285,6 +288,17 @@ where it goes. Settings, history and bookmarks are in the menu at the top right.
   shelf lists the page's notes above its contents, the bar under the text shows them as
   small squares, and **Your notes** in the menu lists them all, by page. A saved article
   carries its notes at the end, and a page with notes keeps its copy for good.
+- **Notes in the margin, with your pictures.** In a wide window the notes stand in a margin
+  between the text and the shelf, each level with its passage and joined to it by a thin
+  line, as comments are in a word processor; where there is no room, they stand under
+  their paragraph. Click a note's words to edit them in place. A map or a diagram found
+  elsewhere goes next to the passage: paste it into the note, drop it on the note, or pick
+  a file — it is your picture, marked as yours, never part of the article.
+  `Ctrl+Shift+M` hides the notes and leaves the highlights.
+- **Notes go out as Markdown.** **Export this page's notes** or **Export all notes**, in
+  the menu, writes each quote with a link straight to its place on the page, your words
+  and your pictures — Markdown that Obsidian and similar tools read as it is: a `.zip`,
+  or a `.md` with an `images/` folder beside it.
 - **Next page.** A page that names the one after it — a series, a book chapter, a thread's
   next page — ends with a **Next:** line, and `Space` at the very end goes there.
 - **A new tab shows the five pages you read last.**
@@ -341,6 +355,14 @@ where it goes. Settings, history and bookmarks are in the menu at the top right.
   **the Wayback copy**: the latest one the Wayback Machine saved of the page itself, not
   of its 404.
 
+Notes in the margin of the essay at the top of this page, one with a sketch of the reader's own:
+
+![Dan Luu's essay on keyboard latency with three passages highlighted; between the text and
+the shelf stand two notes, each level with its passage and joined to it by a thin line, the
+first with the reader's sketch of where the milliseconds of a key press go; the passage
+highlighted without words has no note beside it; the shelf lists the page's notes above its
+contents](assets/screenshot-notes.png)
+
 A feed in Brevier — the Rust blog's, `blog.rust-lang.org/feed.xml`:
 
 ![The Rust blog's feed in Brevier: each entry's title as a link, its date and author in
@@ -365,7 +387,9 @@ text — not in a WebView — with the same typography and colours as the window
 - It opens links, shared text, `feed://` links and Markdown or feed files from other apps.
 - A long press on a link opens it in a new tab, copies it, or sends it to your browser.
 - **Highlight** and **Note** sit in the selection menu next to Copy; a tap on a marked
-  passage edits or removes its note.
+  passage edits or removes its note. A note's words and pictures stand right under its
+  paragraph; a picture comes from the system photo picker, and big camera photos are made
+  smaller. **Share this page's notes** sends them out as Markdown.
 - A tap on a picture saves it to your gallery or shares it.
 - A very long page — a whole novel — shows its first screen at once.
 - **The bar slides away while you read**: it follows your finger up and down without moving
@@ -434,6 +458,7 @@ History, open tabs and bookmarks are plain text, one line per entry:
 ~/.local/share/brevier/archive/        # a copy of every article you read
 ~/.local/share/brevier/reading.tsv     # where you stopped in long pages
 ~/.local/share/brevier/notes.tsv       # your highlights and notes
+~/.local/share/brevier/notes/          # the pictures in your notes
 ```
 
 The archive holds one file per page, `<host>/<date>-<title>.md.lz4`: Markdown with a short

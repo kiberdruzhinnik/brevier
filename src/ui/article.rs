@@ -8,9 +8,12 @@
 //! фон абзаца у пустых строк, который GTK не рисует сам (#28).
 //!
 //! Рисуем слоем ниже текста (`snapshot_layer`) — это штатный способ GTK
-//! дописать что-то к отрисовке `GtkTextView`, не переписывая её.
+//! дописать что-то к отрисовке `GtkTextView`, не переписывая её. Третья
+//! забота — поле заметок (#42, `margin.rs`): статья держит его карточки
+//! и рисует линии от цитат к ним тем же слоем.
 
-use std::cell::Cell;
+use std::cell::{Cell, OnceCell};
+use std::rc::Rc;
 
 use gtk::glib;
 use gtk::prelude::*;
@@ -25,6 +28,8 @@ const RULES: [&str; 3] = ["rule1", "rule2", "rule3"];
 // Толщина линейки, её место в левом поле цитаты и шаг уровня — в ядре,
 // вместе с остальной типографской моделью: телефон рисует ту же линейку.
 use brevier::outline::{INDENT as RULE_STEP, RULE_INSET, RULE_WIDTH, RULE_X};
+
+use crate::margin::Margin;
 /// Сколько GTK оставляет справа под курсор: фон абзаца кончается на столько
 /// левее полной ширины текста (`SPACE_FOR_CURSOR` в gtktextview.c). Фон
 /// пустой строки обязан кончаться там же, иначе у панели кода справа зубец.
@@ -36,12 +41,18 @@ mod imp {
     pub struct Article {
         /// Цвет линейки. Меняется вместе с темой, поэтому не константа.
         pub rule: Cell<gtk::gdk::RGBA>,
+        /// Поле заметок вкладки — заводится при первом обращении.
+        pub margin: OnceCell<Rc<Margin>>,
+        /// Ширина поля заметок сбоку; 0 — поля нет.
+        pub panel: Cell<i32>,
     }
 
     impl Default for Article {
         fn default() -> Self {
             Self {
                 rule: Cell::new(gtk::gdk::RGBA::new(0.6, 0.6, 0.6, 1.0)),
+                margin: OnceCell::new(),
+                panel: Cell::new(0),
             }
         }
     }
@@ -54,7 +65,29 @@ mod imp {
     }
 
     impl ObjectImpl for Article {}
-    impl WidgetImpl for Article {}
+
+    impl WidgetImpl for Article {
+        // Поле заметок (#42) входит в естественную ширину статьи, а не
+        // в наименьшую: наименьшая — мера, и окно сужается до неё. Тогда
+        // поле не помещается, и заметки уходят под абзацы. GTK же кладёт
+        // правое поле текста и в наименьшую — поверх самого широкого
+        // виджета страницы (таблица, рамка картинки стоят во всю меру), —
+        // и поле держало бы окно шире, чем хочет читатель.
+        fn measure(&self, orientation: gtk::Orientation, for_size: i32) -> (i32, i32, i32, i32) {
+            let (min, natural, min_base, natural_base) = self.parent_measure(orientation, for_size);
+            if orientation != gtk::Orientation::Horizontal {
+                return (min, natural, min_base, natural_base);
+            }
+            let panel = self.panel.get();
+            let wanted = self.obj().width_request() + panel;
+            (
+                (min - panel).max(0),
+                natural.max(wanted),
+                min_base,
+                natural_base,
+            )
+        }
+    }
 
     impl TextViewImpl for Article {
         fn snapshot_layer(&self, layer: gtk::TextViewLayer, snapshot: gtk::Snapshot) {
@@ -62,6 +95,9 @@ mod imp {
                 let view = self.obj();
                 draw_empty_paragraphs(view.upcast_ref(), &snapshot);
                 draw_quote_rules(view.upcast_ref(), &snapshot, self.rule.get());
+                if let Some(margin) = self.margin.get() {
+                    margin.draw(view.upcast_ref(), &snapshot);
+                }
             }
             self.parent_snapshot_layer(layer, snapshot);
         }
@@ -93,6 +129,28 @@ impl Article {
         self.imp().rule.set(color);
         self.queue_draw();
     }
+
+    /// Поле заметок этой статьи (#42).
+    pub fn margin(&self) -> Rc<Margin> {
+        self.imp()
+            .margin
+            .get_or_init(|| Margin::new(self.upcast_ref()))
+            .clone()
+    }
+}
+
+/// Место под поле заметок справа от текста: столько вид просит сверх меры.
+pub fn widen(view: &gtk::TextView, panel: i32) {
+    if let Some(article) = view.downcast_ref::<Article>()
+        && article.imp().panel.replace(panel) != panel
+    {
+        article.queue_resize();
+    }
+}
+
+/// Поле заметок вида статьи; у прочих видов (вкладка настроек) его нет.
+pub fn margin_of(view: &gtk::TextView) -> Option<Rc<Margin>> {
+    view.downcast_ref::<Article>().map(Article::margin)
 }
 
 /// Линейка слева от каждой строки, помеченной тегом цитаты.
