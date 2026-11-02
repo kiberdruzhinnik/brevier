@@ -109,8 +109,7 @@ android {
     }
 
     sourceSets["main"].apply {
-        // Гарнитуры и их лицензия — те же файлы, что вшиты в десктоп: одна
-        // типографика на обеих платформах, и OFL едет вместе со шрифтами.
+        // Гарнитуры и их лицензия входят в Android-приложение вместе.
         assets.srcDir(repo.resolve("assets/fonts"))
         jniLibs.srcDir(coreDir)
     }

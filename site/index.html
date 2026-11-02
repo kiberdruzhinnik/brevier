@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Brevier — a browser for reading</title>
-<meta name="description" content="Brevier is a browser for reading. It fetches a page, turns it into clean text on your own computer and sets it in calm, readable type: no JavaScript, no pop-ups, no site styles. For Linux, Windows and Android.">
+<meta name="description" content="Brevier is a browser for reading. It fetches a page, turns it into clean text on your own computer and sets it in calm, readable type: no JavaScript, no pop-ups, no site styles. For Android.">
 <link rel="canonical" href="https://brevier.bizibah.com/">
 <link rel="icon" href="brevier.svg" type="image/svg+xml">
 <link rel="alternate" type="application/atom+xml" title="Brevier releases" href="https://github.com/gurov/brevier/releases.atom">
@@ -13,7 +13,7 @@
 <meta property="og:title" content="Brevier — a browser for reading">
 <meta property="og:description" content="A browser that walks past the dragons of the web and brings you the page on clean paper. No JavaScript, ever.">
 <meta property="og:url" content="https://brevier.bizibah.com/">
-<meta property="og:image" content="https://brevier.bizibah.com/og-card.png">
+<meta property="og:image" content="https://brevier.bizibah.com/android.webp">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -21,7 +21,7 @@
   "name": "Brevier",
   "description": "A browser for reading: it turns a web page into clean text on your own computer and sets it in calm, readable type. No JavaScript.",
   "applicationCategory": "BrowserApplication",
-  "operatingSystem": "Linux, Windows 10, Windows 11, Android 7+",
+  "operatingSystem": "Android 7+",
   "license": "https://github.com/gurov/brevier#license",
   "url": "https://brevier.bizibah.com/",
   "downloadUrl": "https://github.com/gurov/brevier/releases/latest",
@@ -185,7 +185,7 @@
   .placeholder figcaption { color: var(--dim); margin-top: 0.75rem; text-align: center; }
   .placeholder.phone .frame { min-height: 22rem; max-width: 14rem; margin: 0 auto; }
 
-  /* Screenshots of the window. */
+  /* Android screenshots. */
   .shot img {
     display: block;
     width: 100%;
@@ -223,13 +223,12 @@
   <img src="brevier.svg" alt="The Brevier mark">
   <h1>Brevier</h1>
   <p class="tagline">A browser for reading. Dragons not included.</p>
-  <p class="lead">Brevier fetches a page, turns it into clean text on your own computer,
+  <p class="lead">Brevier fetches a page, turns it into clean text on your Android phone,
     and sets it in calm, readable type — not the type the site chose. No JavaScript,
-    no pop-ups, no site styles. For Linux, Windows and Android.</p>
+    no pop-ups, no site styles.</p>
   <ul class="downloads">
-    <li><a href="flatpak/brevier.flatpakref">Linux<small>Flatpak</small></a></li>
-    <li><a href="https://github.com/gurov/brevier/releases/latest">Windows<small>installer or zip</small></a></li>
     <li><a href="https://f-droid.org/packages/io.github.gurov.brevier/">Android<small>F-Droid</small></a></li>
+    <li><a href="https://github.com/gurov/brevier/releases/latest">Android<small>APK release</small></a></li>
     <li><a href="https://github.com/gurov/brevier">Source<small>on GitHub</small></a></li>
   </ul>
   <p class="fine">Free and open source · MIT or Apache-2.0 ·
@@ -239,11 +238,10 @@
 <main>
 
 <figure class="shot wide">
-  <picture>
-    <source srcset="hero-still.webp" media="(prefers-reduced-motion: reduce)" width="1936" height="514">
-    <img src="hero.webp" width="1200" height="643" alt="The same Guardian article twice. First in Chrome: the text squeezed into a narrow column between a video, an advertisement and a fundraising banner across the bottom of the screen. Then in Brevier: the same text in one calm column on ivory paper, with the contents and the site's sections on the shelf.">
-  </picture>
-  <figcaption>Before and after. The dragons stay outside.</figcaption>
+  <div class="stack">
+    <img class="handset" src="android.webp" width="576" height="1159" alt="Brevier reading a discussion thread as native text on an Android phone, with its contents shelf open.">
+  </div>
+  <figcaption>A calm reading room on your phone.</figcaption>
 </figure>
 
 <section class="column">
@@ -257,7 +255,6 @@
     <li><a href="#ravens">Ravens from distant towers</a></li>
     <li><a href="#chronicle">The chronicle that does not burn</a></li>
     <li><a href="#gates">When the gate stays shut</a></li>
-    <li><a href="#builders">For castle builders</a></li>
     <li><a href="#left-at-home">What the hero leaves at home</a></li>
     <li><a href="#treasure">Your treasure, your chest</a></li>
     <li><a href="#mounts">Choose your mount</a></li>
@@ -332,43 +329,20 @@
   </ul>
 </section>
 
-<figure class="shot wide">
-  <div class="pair">
-    <img src="reading-light.png" width="1400" height="900" alt="Dan Luu's essay on keyboard latency in Brevier's light theme: dark text on ivory paper in a hyphenated column, two quotations set off by a rule, and on the right the shelf with the contents, the current section highlighted.">
-    <img src="reading-dark.png" width="1400" height="900" alt="The same page in the dark theme: light text on a warm, nearly black background.">
-  </div>
-  <figcaption>An essay on keyboard latency, by day and by candlelight.</figcaption>
-</figure>
-
 <section class="column" id="tower">
   <h2><span class="chapter">Chapter four</span>The library tower</h2>
   <p>Some of the best scrolls on the web live in git repositories: manuals, books, guides.
     Type <code>gh:owner/repo</code> in the address bar and Brevier opens the README, with the
-    project's documentation laid out on a shelf at the right. <code>gl:</code> works for GitLab.
+    project's documentation laid out on the reading shelf. <code>gl:</code> works for GitLab.
     End the address with a slash, and you see what the folder holds.</p>
   <p>The same shelf shows the contents of any long page and marks the section you are
     reading, so you never lose your place in a tall tower of text. Under the contents sit
     the site's feeds and its own menu; above them, your notes. Select a passage to
     highlight it or to write a few words beside it, and the marks are where you left them
-    when you come back, even if the site has moved the furniture around them. In a wide
-    window the notes stand in the margin beside the text, each tied to its passage by a thin
-    thread, like a scribe's glosses; in a narrow one, and on the phone, they wait under their
-    paragraph. A note can carry a picture of your own — a map, a sketch of the dragon — and
+    when you come back, even if the site has moved the furniture around them. On Android, each note appears below the paragraph it annotates, at every screen width. A note can carry a picture of your own — a map, a sketch of the dragon — and
     your notes leave the tower as Markdown, each quote with a link back to its place.</p>
-  <p>Markdown files from your own disk open just as well — handy in the age of AI, when so
-    much of what you save is Markdown. Everywhere but in the Flatpak, that is: its sandbox
-    keeps your files out of reach.</p>
+  <p>Markdown files shared with Brevier open in the same native reader.</p>
 </section>
-
-<figure class="shot wide">
-  <img src="repository.png" width="1400" height="750" alt="The Rust book's chapter on data types, opened as gh:rust-lang/book/src/ch03-02-data-types.md: the chapter's text and a code example on the left; on the shelf, the repository's documentation, Contributing and the files in the directory, then the chapter's sections.">
-  <figcaption>The Rust book, straight from its repository.</figcaption>
-</figure>
-
-<figure class="shot wide">
-  <img src="notes.png" width="1400" height="900" alt="Dan Luu's essay on keyboard latency with three passages highlighted; between the text and the shelf stand two notes, each level with its passage and joined to it by a thin line, the first with the reader's sketch of where the milliseconds of a key press go; the shelf lists the page's notes above its contents.">
-  <figcaption>Glosses in the margin, as the scribes kept them.</figcaption>
-</figure>
 
 <section class="column" id="ravens">
   <h2><span class="chapter">Chapter five</span>Ravens from distant towers</h2>
@@ -384,11 +358,6 @@
     results come back as a plain list of links. No raven was harmed. Other search engines
     may come later. Or they may not.</p>
 </section>
-
-<figure class="shot wide">
-  <img src="feed.png" width="1400" height="800" alt="The Rust Blog feed as a list: each entry's title as a link, the date and the authors, then a short summary.">
-  <figcaption>A feed is a list of things to read, so that is how it looks.</figcaption>
-</figure>
 
 <figure class="shot wide">
   <div class="stack">
@@ -411,14 +380,6 @@
     about what you read.</p>
 </section>
 
-<figure class="shot wide">
-  <picture>
-    <source srcset="continue.png" media="(prefers-reduced-motion: reduce)">
-    <img src="continue.webp" width="1000" height="650" alt="Dan Luu's essay on keyboard latency opens at the top; the status line says “You have read part of this page before” and offers Continue from 43%. One click, and the text moves to where the reader stopped, with that section marked on the shelf. Then Ctrl+Shift+F, the word “display” typed into the address bar, and the search answers with three pages you have read, a snippet from each.">
-  </picture>
-  <figcaption>Picking up the thread, and finding the old scroll.</figcaption>
-</figure>
-
 <section class="column" id="gates">
   <h2><span class="chapter">Chapter seven</span>When the gate stays shut</h2>
   <p>Not every castle opens. Some sites are built entirely out of JavaScript, and some keep
@@ -437,33 +398,8 @@
     counted it</a>.</p>
 </section>
 
-<figure class="shot wide">
-  <img src="gone.png" width="1400" height="700" alt="Brevier's page for an address where nothing lives: “The page is not there”, a note that you read the page on 9 October 2026 and your archive keeps a copy, and three buttons: Open your copy, Read the Wayback copy, Open in your browser.">
-  <figcaption>Even a closed gate comes with directions.</figcaption>
-</figure>
-
-<section class="column" id="builders">
-  <h2><span class="chapter">Chapter eight</span>For castle builders</h2>
-  <p>If you build websites, Brevier can tell you, a bit like Lighthouse, how yours looks to
-    a reader who runs no scripts. <code>brevier --check https://your.site/</code> gives a score from 0 to 100, says what
-    to change, and prints the arithmetic — so you can argue with a number instead of a
-    mystery.</p>
-  <p>There is a GitHub Action too. It writes the report into the job summary and fails the
-    build when a page falls below your mark:</p>
-<pre><code class="language-yaml">- uses: gurov/brevier@main   # or a release tag
-  with:
-    urls: |
-      https://example.com/
-    min: 80</code></pre>
-</section>
-
-<figure class="shot wide">
-  <img src="check.png" width="1400" height="800" alt="The check report for example.com: a score of 73 out of 100, the sum behind it, and the findings stage by stage, each saying what to change.">
-  <figcaption>A report card for your castle, with the sums shown.</figcaption>
-</figure>
-
 <section class="column" id="left-at-home">
-  <h2><span class="chapter">Chapter nine</span>What the hero leaves at home</h2>
+  <h2><span class="chapter">Chapter eight</span>What the hero leaves at home</h2>
   <p>A good adventurer packs light. Brevier will not carry:</p>
   <ul>
     <li><strong>JavaScript.</strong> Never, in any form. That is the whole point.</li>
@@ -475,14 +411,11 @@
       can't read — it will travel in its own bag and sleep until you wake it.
       Perhaps we will manage without it altogether.</li>
   </ul>
-  <p>And one honest limit: <strong>screen readers work on Linux only</strong> for now. GTK's
-    accessibility does not reach Windows yet, and on Android TalkBack should read the native
-    text, but nobody has tried it yet. We would rather tell you here than let you find out
-    the hard way.</p>
+  <p>TalkBack support has not yet been tested.</p>
 </section>
 
 <section class="column" id="treasure">
-  <h2><span class="chapter">Chapter ten</span>Your treasure, your chest</h2>
+  <h2><span class="chapter">Chapter nine</span>Your treasure, your chest</h2>
   <p>History, open tabs and bookmarks are plain text files, one line per entry. Delete a
     line to forget a page. The archive is Markdown in the standard LZ4 format, so
     <code>lz4 -d</code> opens it without Brevier — or plain <code>.md</code> files, if you
@@ -492,54 +425,16 @@
 </section>
 
 <section class="column" id="mounts">
-  <h2><span class="chapter">Chapter eleven</span>Choose your mount</h2>
-  <h3>Linux</h3>
-  <p>A <a href="flatpak/brevier.flatpakref">Flatpak</a> that works on any distribution,
-    from Brevier's own signed repository: GNOME Software or Discover opens it with a click,
-    or <code>flatpak install --user https://brevier.bizibah.com/flatpak/brevier.flatpakref</code>,
-    and new versions arrive with <code>flatpak update</code>. Brevier itself weighs about
-    5 MB, but if your system has no GNOME runtime yet, Flatpak fetches that too: about
-    400 MB, shared by every Flatpak app. If that is too heavy a saddle, there is an 11 MB
-    tarball for systems that already have GTK 4.
-    Those who keep a forge at home can build it from
-    <a href="https://crates.io/crates/brevier">crates.io</a> with Rust and GTK 4:
-    <code>cargo install --locked brevier --features ui</code>.</p>
-  <h3>Windows 10 and 11</h3>
-  <p>An installer that sets Brevier up for you alone, with no administrator rights, or a zip
-    that runs from any folder. The installer is not signed yet, so Windows first says
-    <em>Windows protected your PC</em>: choose <strong>More info</strong>, then
-    <strong>Run anyway</strong>. Dragons have made Windows a little nervous.</p>
+  <h2><span class="chapter">Chapter ten</span>Choose your mount</h2>
   <h3>Android 7 and later, 64-bit ARM</h3>
-  <p>Not yet another web view in disguise: a native app over the same core that draws the
-    article as real text, with tabs, the shelf, find on page, the dark theme and a bar that
-    slides out of the way while you read. Install it from
-    <a href="https://f-droid.org/packages/io.github.gurov.brevier/">F-Droid</a>, which keeps
-    it up to date, or download the same APK from the releases. F-Droid publishes it only when its own build
-    matches ours byte for byte, so an install from either place takes updates from the
-    other.</p>
-  <h3>The command line</h3>
-  <p><code>brevier https://example.com/article</code> prints the article as Markdown.
-    Scrolls for scripts. Every release carries it as one file for Linux, macOS and
-    Windows, with nothing to install beside it, not even GTK. On a Mac this is the only
-    mount for now: the window has not sailed there yet. The macOS file is not signed, so if
-    a browser downloaded it, run <code>xattr -d com.apple.quarantine brevier</code> once.
-    Or build it:
-    <code>cargo install --locked brevier --features save</code>.</p>
+  <p>Brevier is a native Android reader over the shared Rust core. Install it from
+    <a href="https://f-droid.org/packages/io.github.gurov.brevier/">F-Droid</a> for updates,
+    or download the APK from <a href="https://github.com/gurov/brevier/releases/latest">GitHub Releases</a>.
+    F-Droid publishes the same release build when its reproducibility check passes.</p>
   <ul class="downloads">
-    <li><a href="https://github.com/gurov/brevier/releases/latest">Download the latest release<small>Linux · Windows · Android</small></a></li>
+    <li><a href="https://github.com/gurov/brevier/releases/latest">Download the latest release<small>Android APK</small></a></li>
   </ul>
 </section>
-
-<figure class="shot wide">
-  <div class="stack">
-    <picture class="handset slides">
-      <source srcset="android-still.webp" media="(prefers-reduced-motion: reduce)" width="2880" height="1159">
-      <img src="android.webp" width="576" height="1159" alt="Five steps on an Android phone. A Reddit thread on hard science fiction opens in the phone's browser. In the browser's menu, Open in Brevier is circled. The same thread in Brevier, in the reader's type on ivory paper. Its 80 comments, each with its author and its day. Brevier's shelf over the thread: points down the page, each with how far in it is, the one being read marked.">
-    </picture>
-    <img src="windows.webp" width="1360" height="917" alt="Brevier on Windows: an article on mushrooms from BBC Earth, its section on mushrooms that glow in the dark above a photograph of many mushrooms on a wooden table; three tabs above the page; on the right the shelf with the article's sections, the current one marked, and the site's pages.">
-  </div>
-  <figcaption>The same reading room in your pocket and on Windows.</figcaption>
-</figure>
 
 <section class="column" id="quest">
   <h2><span class="chapter">Epilogue</span>Join the quest</h2>
@@ -557,8 +452,7 @@
 </main>
 
 <footer class="column">
-  <p>This page has no JavaScript, no trackers and no web fonts. It reads well in Brevier:
-    <code>brevier https://brevier.bizibah.com</code></p>
+  <p>This page has no JavaScript, no trackers and no web fonts. It reads well in Brevier on Android.</p>
   <p>Brevier is made by <a rel="author" href="https://github.com/gurov">gurov</a> ·
     MIT or Apache-2.0 · this page updated <time datetime="2026-10-24">24 October 2026</time></p>
 </footer>

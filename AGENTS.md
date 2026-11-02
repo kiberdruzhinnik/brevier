@@ -12,11 +12,11 @@ read the change, checked it the way this file asks, and say how.
 
 ## What Brevier is
 
-A reading browser without JavaScript. It fetches a page, reduces it to Markdown on the
-reader's machine and sets it in the reader's type, not the site's — plus a mode for
-reading the documentation of git repositories. A core library in Rust (`brevier`), a cli
-on top of it, a GTK 4 window (`brevier-ui`, the `ui` feature) and an Android app
-(`android/`, Kotlin over the same core).
+A reading browser for Android without JavaScript. It fetches a page, reduces it to Markdown
+on the reader's machine and sets it in the reader's type, not the site's — plus a mode for
+reading the documentation of git repositories. A core library in Rust and an Android app
+(`android/`, Kotlin over the same core). The Linux CLI remains in the repository for
+maintainers' parser checks; it is not a public product.
 
 What it promises is in [MANIFESTO.md](MANIFESTO.md); where it is going and what has been
 settled is in [ROADMAP.md](ROADMAP.md), under "Decided". Where this file and those two
@@ -53,14 +53,8 @@ saying why it is the way it is: read it before simplifying. A few that agents te
 
 - **Markdown is the internal representation**, not a file format: one renderer for the web
   and for `.md` files. What Markdown cannot hold is lost on purpose.
-- **The core links no toolkit.** GTK stays in `src/ui/`, Android in `src/android.rs` and
-  `android/`.
-- **One page model for both front-ends** (`src/page.rs`). Style names are the window's tag
-  names and the Android span names; a change to how an article looks is made there, once,
-  and then drawn in both.
-- **The window draws with `GtkTextView`**, tables as widgets on anchors, formulas as
-  `GdkPaintable` in the buffer (not widgets — scrolling stutters). **Android draws native
-  text**, never a WebView.
+- **The core links no toolkit.** Android stays in `src/android.rs` and `android/`.
+- **Android draws native text**, never a WebView, from the page model in `src/page.rs`.
 - **Interface text is English and lives in the core** (`src/failure.rs`, `src/intro.rs`),
   so every front-end says the same thing.
 - **Dependencies come without default features** when those bring weight; no `serde_json`
@@ -72,8 +66,8 @@ saying why it is the way it is: read it before simplifying. A few that agents te
 
 Say in the pull request which of these you did and what you saw:
 
-- **Any change:** `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, the
-  same with `--features ui`, `cargo test` (the page model's tests need
+- **Any change:** `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
+  `cargo test` (the page model's tests need
   `--features images,typeset`).
 - **Extraction or conversion:** run the old and the new binary over the **same saved
   HTML** — download the corpus pages once, build the old binary from the base commit in a
@@ -83,15 +77,14 @@ Say in the pull request which of these you did and what you saw:
   for those.
 - **Extraction, conversion or the page model** (typesetting, the shelf, reading progress,
   find, notes): `corpus/frozen.py snapshot` once, then `corpus/frozen.py --approve` on the
-  base commit and `corpus/frozen.py` on yours. It lays every saved page out as the window
-  and the phone do and stops on a panic, a hang, a model that does not add up, or a
+  base commit and `corpus/frozen.py` on yours. It lays every saved page out as the Android
+  reader does and stops on a panic, a hang, a model that does not add up, or a
   difference from the approved output.
 - **A parser** (`json.rs`, `feed.rs`, `address.rs`, `page.rs`, `notes.rs`, `typeset.rs`, the
   extraction path): run its target in `fuzz/` for a few minutes (see CONTRIBUTING, Fuzzing).
 - **`--check`:** `corpus/check.sh`, offline.
-- **The window or the app:** tests do not cover them. Run it — a window, an emulator, a
-  phone — and say what you looked at. A screenshot helps; a description of a pixel
-  measurement is better than "looks fine".
+- **The app:** tests do not cover it. Run it on a phone and say what you looked at. A
+  screenshot helps; a description of a pixel measurement is better than "looks fine".
 - **A new host rule:** a test against the host's real markup — a saved page in
   `tests/fixtures/`, or the parts the rule reads, condensed in the test.
 
@@ -117,11 +110,6 @@ Say in the pull request which of these you did and what you saw:
   refusal.
 - **`tests/wire.rs` fails wholesale after the checkout moves**: the binary's path is baked
   in at compile time. `touch tests/wire.rs`.
-- **GTK calls handlers at moments of its own choosing**, including from inside another
-  widget's setter. A handler that borrows shared state uses `try_borrow` and gives up
-  quietly when it is busy.
-- **Pango's negative indent indents the continuation, not the first line** — that is how
-  list items, verse and code get their hanging indent.
 - **On Android, `optString` returns JSON `null` as the string "null"** — read nullable
   fields with `text()` (`Core.kt`).
 

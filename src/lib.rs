@@ -73,7 +73,7 @@ mod scratch;
 /// с разной судьбой.
 pub mod store;
 /// Типографика по языку: переносы и неразрывные пробелы. За фичей `typeset`
-/// (её тянет `ui`): cli печатает markdown как есть, а паттерны переносов —
+/// (её тянет Android): cli печатает markdown как есть, а паттерны переносов —
 /// вес, не нужный ни ему, ни корпусу.
 #[cfg(feature = "typeset")]
 pub mod typeset;
@@ -176,11 +176,11 @@ fn open_internal(page: &Internal, ua: UserAgent) -> Result<Document, Error> {
             let copies = archive::Archive::open().latest_of(addresses.iter().map(String::as_str));
             ("Your notes".to_owned(), notes.page(&copies))
         }
-        // Заметки пишут окно и телефон; cli без модели страницы их не знает.
+        // Заметки отображает приложение; cli без модели страницы их не знает.
         #[cfg(not(all(feature = "images", feature = "typeset")))]
         Internal::Notes => (
             "Your notes".to_owned(),
-            "# Your notes\n\nNotes live in the window and on the phone.\n".to_owned(),
+            "# Your notes\n\nNotes are available in the Android app.\n".to_owned(),
         ),
         Internal::Check(None) => ("Check".to_owned(), check::about().to_owned()),
         Internal::Check(Some(url)) => {

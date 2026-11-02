@@ -1,265 +1,109 @@
 # Contributing to Brevier
 
-Patches and bug reports are welcome. This file is for working on the code; for using
-Brevier, see the [README](README.md).
+Patches and bug reports are welcome. For product behavior, see the [README](README.md),
+[manifesto](MANIFESTO.md), and [roadmap](ROADMAP.md). Brevier is an Android app over a
+shared Rust core. The Linux CLI is kept in the repository for maintainers' parser checks
+on Linux VPS hosts; it is not published or distributed as an app.
 
 Working with a coding agent? Give it [AGENTS.md](AGENTS.md) as well.
 
-What is planned is in the [roadmap](ROADMAP.md) and the issues labelled `roadmap`; smaller
-items carry `bug` or `enhancement`. What the program promises is in the
-[manifesto](MANIFESTO.md), and those promises decide more than code quality does: a patch
-that adds a JavaScript engine, applies a site's CSS, makes the default reading path depend
-on a model or makes Brevier hold a credential will not be merged, however well it is
-written. A model, if one ever helps, comes as a separate optional module; see
-[AGENTS.md](AGENTS.md).
+## Languages and layout
 
-## Languages
+Everything on GitHub — issues, pull requests, commit messages — is in English. Interface
+text is in English and lives in the core (`src/failure.rs`, `src/intro.rs`). Comments in the
+code are mostly in Russian; write yours in the language you are most exact in.
 
-Everything on GitHub — issues, pull requests, commit messages — is in English. The
-interface is in English too, and its texts live in the core (`src/failure.rs`,
-`src/intro.rs`), so that every front-end says the same thing. Comments in the code are
-mostly in Russian; write yours in whatever language you are most exact in.
+- `src/` — the Rust core: fetching, extraction, conversion to Markdown, feeds, repository
+  reading, storage, and the page model. `src/android.rs` is its JNI entry point.
+- `src/main.rs` — the Linux CLI used by maintainers and parser checks.
+- `android/` — the native Android app in Kotlin, using the shared core through JNI.
+- `corpus/` — saved regression expectations and scripts for checking parsers and extraction.
+- `fuzz/` — fuzz targets for parser and page-model invariants.
+- `fastlane/` — F-Droid metadata and store assets.
 
-## How the code is laid out
+## Build and check the core
 
-- **`src/`** — the core, the library `brevier`: fetching, extraction, conversion to
-  Markdown, feeds, the repository mode, storage, and the page model. It links no toolkit,
-  and that is a decision rather than an accident: the core has to cross to every front-end
-  unchanged.
-- **`src/page.rs`** — the page as both front-ends draw it: text, styled runs named like the
-  window's tags (`body`, `h2`, `quote1`, `codeblock`…), links, anchors, the contents, and
-  the places of images and tables. A change to how an article looks is made here, once.
-- **`src/main.rs`** — `brevier`, the cli. The corpus runs on it.
-- **`src/ui/`** — `brevier-ui`, the window, on GTK 4 (the `ui` feature).
-- **`android/`** — the Android app: Kotlin over the core, through one JNI entry point
-  (`src/android.rs`) that answers in JSON. No androidx.
-- **`src/hosts.rs`** — the per-host rules, in one small table: reddit read through its
-  feed, Hacker News, Lobsters and Discourse threads and lists read from their own markup
-  (`src/hosts/hacker_news.rs`, `lobsters.rs`, `discourse.rs` — Discourse by its generator
-  tag rather than its host; what a thread looks like is in `src/hosts/thread.rs`), Habr's
-  comments, fetched the way its page's script fetches them and set under the article
-  (`habr.rs`), rustdoc
-  pages read from their main column (`rustdoc.rs`, also by generator), the search engine's
-  results page, and royallib's reader,
-  whose book comes part by part. Everything else is ruled by the shape of a page, never
-  by its site. The results
-  page is tested against a saved copy in `tests/fixtures/`; when DuckDuckGo changes its
-  markup, that test fails instead of the reader.
-- **`corpus/`** — the regression corpus, its expected outputs and the scripts that measure.
-- **`packaging/`** — the Flatpak manifest, the offline crate list, the tarball, the desktop
-  entry, the metainfo, the Windows build (`packaging/windows/`) and the release notes.
-
-Each module opens with a comment on why it is the way it is. Much of what looks
-superfluous has been decided, with its cost; read that comment before simplifying.
-
-## Building
-
-### The cli and the window
-
-Rust 1.88 or newer (edition 2024 needs 1.85; the image decoder's `slice::as_chunks` needs
-1.88). The window needs GTK 4.10 or newer with its development files.
+Rust 1.88 or newer is needed. The Linux CLI is a development tool; build it from the
+repository root:
 
 ```sh
-cargo build --release                  # brevier — the cli
-cargo build --release --features ui    # brevier-ui — the window, on GTK 4
-sudo apt install libgtk-4-dev build-essential   # Debian/Ubuntu, for the ui feature
+cargo build --bin brevier
+cargo run --bin brevier -- --stdin https://example.com/ < saved-page.html
+cargo run --bin brevier -- --check --min 100 https://example.com/
 ```
 
-`ui` pulls in `save`, `typeset` and `images` — image decoding, saving and hyphenation. The
-cli builds without any of them, and a build without `save` says so when asked to `--save`.
-
-To use a source build as a desktop application, install it with its desktop entry and icon
-for your user:
+For local core checks:
 
 ```sh
-cargo install --path . --features ui
-install -Dm644 packaging/io.github.gurov.brevier.desktop \
-        ~/.local/share/applications/io.github.gurov.brevier.desktop
-install -Dm644 assets/brevier.svg \
-        ~/.local/share/icons/hicolor/scalable/apps/io.github.gurov.brevier.svg
-update-desktop-database ~/.local/share/applications
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+cargo test --features images,typeset
+corpus/check.sh
 ```
 
-From crates.io, without a checkout, the first line is
-`cargo install --locked brevier --features ui`; the desktop entry and the icon still come
-from the repository.
+The CLI's `--stdin` mode is useful for testing a parser against saved HTML without mixing
+code changes with changes to a live site. `corpus/check.sh` runs offline against saved
+expectations. Live corpus runs use four jobs; more often brings 403 responses.
 
-The icon ships inside the binary, so on X11 the window wears it with nothing installed; a
-launcher menu and a Wayland compositor take it from the desktop entry and the app id
-instead.
+## Build Android
 
-### Windows
-
-The window is built in [MSYS2](https://www.msys2.org/), in its UCRT64 environment, which
-provides GTK 4, Rust and NSIS:
-
-```sh
-pacman -S zip mingw-w64-ucrt-x86_64-{gtk4,gtk-update-icon-cache,rust,gcc,pkgconf,nsis}
-packaging/windows/build.sh            # the installer and the zip, in packaging/dist
-```
-
-GTK on Windows is a folder of DLLs next to the executables, so a release ships a folder
-rather than one `.exe`: an installer that puts it in `%LOCALAPPDATA%\Programs\Brevier`
-for the current user, with no administrator rights, and the same folder as a zip that
-runs from anywhere. The script copies every DLL the executables import, and the data GTK
-looks for beside them: its settings schemas, the Adwaita icons and the licenses of what it
-ships. The same script cross-compiles from Linux when told where GTK for Windows is (see
-its header); Wine runs the result, but draws text badly, so the type is judged on Windows.
-
-The cli alone builds anywhere Rust does: `cargo build --release` on Windows needs nothing
-else.
-
-### The Android app
-
-JDK 17, the Android SDK (platform 35) and the NDK named by `ndkVersion` in
-`android/app/build.gradle.kts`. Rust for the core is pinned in `android/rust-toolchain.toml`,
-and rustup installs that toolchain with both Android targets on the first build.
+The app needs JDK 17, Android SDK platform 35, and the NDK version named by
+`ndkVersion` in `android/app/build.gradle.kts`. Rust for the shared core is pinned in
+`android/rust-toolchain.toml`; the first build installs that toolchain and its Android
+Rust targets.
 
 ```sh
 export JAVA_HOME=… ANDROID_HOME=…
-cd android && ./gradlew assembleDebug                # arm64 and x86_64
-cd android && ./gradlew assembleDebug -Pabis=x86_64  # the emulator only, faster
+cd android
+./gradlew assembleDebug -Pabis=arm64-v8a
 ```
 
-Gradle builds the core for each ABI itself, through `android/core.sh`, and the APK lands in
-`android/app/build/outputs/apk/debug/` as `brevier-<version>[-<abi>]-debug.apk`. A debug
-build is signed with the debug key and does not install over a release: uninstall first.
-Release builds are signed by CI.
+Gradle builds the Rust core through `android/core.sh`. The APK is written under
+`android/app/build/outputs/apk/debug/`. For a release-shaped unsigned APK:
 
-The release build is reproducible: from the same commit, with the pinned Rust, NDK and JDK,
-the APK comes out the same byte for byte wherever it is built. That is what lets F-Droid
-publish our signed APK instead of signing its own. `./gradlew assembleRelease
--Pabis=arm64-v8a -Punsigned` builds it without a key, and the release workflow checks it
-that way in a second directory (`apksigcopier compare`). So the pins move only on purpose,
-and the F-Droid recipe moves with them.
+```sh
+./gradlew assembleRelease -Pabis=arm64-v8a -Punsigned
+```
 
-The Kotlin component of `rustls-platform-verifier` is kept as source in
-`android/rustls-platform-verifier/`, copied verbatim from upstream, because F-Droid builds
-from source only. Its `VERSION` must match `rustls-platform-verifier-android` in
-`Cargo.lock`, and the build stops when it does not.
+GitHub release builds sign the Android APK. F-Droid builds from source and publishes the
+same APK when its reproducibility check passes. Keep the pinned Rust, NDK, and JDK versions
+aligned with the F-Droid recipe.
 
 ## Before a pull request
 
-- **Every commit is signed off.** `git commit -s` adds a line `Signed-off-by: Your Name
-  <you@example.com>` with the name and address the commit is made under. By it you state,
-  under the [Developer Certificate of Origin](DCO), that you wrote the change or otherwise
-  have the right to submit it under the project's license. CI checks every commit of a pull
-  request; a forgotten sign-off is added with `git rebase --signoff main` and a force-push.
-- `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, the same with
-  `--features ui`, and `cargo test`. CI runs all of them, and builds the core and the app
-  for Android on every push.
-- **A change to extraction or conversion** needs a corpus run diffed against
-  `corpus/expected/` before it is committed — those files exist to catch regressions, and
-  they have. Some sites change on their own between runs (a rotating footer, a one-time
-  token, a relative date); run again before looking for the cause in the code.
-- **A change to extraction, conversion or the page model** (typesetting, the shelf,
-  reading progress, find, notes) also runs `corpus/frozen.py`. It lays every saved page out
-  the way the window and the phone do (`examples/lay.rs`) and stops on a panic, a hang, a
-  model whose offsets do not add up, or any difference from the approved output. Approve
-  on the base commit (`--approve`), then run on the change; every difference must be one
-  you meant.
-- **A change to `--check`** runs `corpus/check.sh`: one page per group of findings, with
-  its expected report, no network needed.
-- **A change to the window or the app** is not covered by the tests. Say in the pull
-  request how you checked it — on a running window, an emulator or a phone.
-- **A new dependency** comes without default features when those bring weight it does not
-  need, and `packaging/cargo-sources.json` is regenerated with
-  `packaging/cargo-sources.py`; CI compares them. `cargo tree | grep webpki-roots` must stay
-  empty: trust in certificates stays with the operating system.
+Every commit must be signed off by its author under the Developer Certificate of Origin.
+Run `cargo fmt --check`, core Clippy and tests above. CI builds the Android core and app.
 
-## The corpus
+For extraction or conversion changes, run the old and new binaries over the same saved HTML
+and inspect every output difference. For extraction, conversion, or page-model changes,
+run `corpus/frozen.py snapshot`, approve the base output, then run it on the change. For a
+parser change, run its fuzz target for a few minutes; for `--check`, run
+`corpus/check.sh`.
 
-The corpus is a list of live addresses (`corpus/urls.txt`) with the Markdown each one is
-expected to give (`corpus/expected/`). What counts as readable is written down in
-`corpus/RUBRIC.md` before a run, and the verdicts are marked by hand.
+## Fuzzing
 
-```sh
-corpus/verify.sh                  # is each address still the page it was?
-corpus/run.sh --ua honest         # a run: corpus/out/, a report and verdicts to mark
-corpus/score.sh --ua honest       # the number at the gate
-corpus/check.sh                   # the --check regression, offline
-corpus/frozen.py snapshot         # save the corpus pages' HTML once, for the next line
-corpus/frozen.py [--approve]      # lay out every saved page, offline: panics, hangs, changes
-corpus/m2.sh                      # how much documentation is reachable from a README
-```
-
-Four jobs is the default; eight bring 403s from some hosts, and a page marked readable
-slides into a refusal. `corpus/out/` is not in git — only the expected outputs are; the
-saved pages stay there too, since other people's pages do not go into a public repository.
-
-### Fuzzing
-
-Each target in `fuzz/fuzz_targets/` takes one part of the core from raw bytes to its end:
-HTML to the page model, Markdown, feeds, JSON, the address bar, find, notes and
-typesetting. It checks what must always hold: no panic, a page model that adds up
-(`Page::faults`), a note found where it was left, typesetting that adds only what `plain`
-takes away. It needs nightly and `cargo install cargo-fuzz`:
+Fuzz targets need nightly Rust and `cargo-fuzz`:
 
 ```sh
 cargo +nightly fuzz run html -- -max_total_time=600 -max_len=65536 -timeout=10
 ```
 
-Seed `fuzz/corpus/<target>/` with saved pages. The corpus stays out of git, and so do the
-findings in `fuzz/artifacts/`. Each finding becomes a unit test next to the code it broke.
+Seed `fuzz/corpus/<target>/` with saved inputs. Corpus seeds and findings under
+`fuzz/artifacts/` stay out of git. Turn each finding into a regression test next to the
+code it exposed.
 
-## Packaging and releases
+## Android releases
 
-```sh
-flatpak run org.flatpak.Builder --force-clean --repo=packaging/repo \
-    packaging/build packaging/io.github.gurov.brevier.yml
-flatpak build-bundle --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
-    packaging/repo brevier.flatpak io.github.gurov.brevier
-packaging/tarball.sh              # the tarball and its install.sh
-```
-
-The Flatpak builds offline, the way Flathub builds: every crate is declared with its
-checksum in `packaging/cargo-sources.json`.
-
-Installs update from Brevier's own Flatpak repository on the site,
-`https://brevier.bizibah.com/flatpak/repo/`, not from Flathub. The release job signs the
-commit and builds the bundle with that repository's address and key, so an installed
-bundle updates too. Pages replaces the whole site on each deploy, so `pages.yml` rebuilds
-the repository every time from the latest release's `brevier.flatpak`
-(`packaging/flatpak-repo.sh`): one signed commit, a signed summary, a static delta. After
-publishing a release, `release.yml` starts `pages.yml` itself. The signing key is the
-secret `FLATPAK_GPG_KEY` of the `flatpak` environment, which only `main` and `v*` tags may
-use; its public half is `site/flatpak/brevier.gpg`, and `brevier.flatpakref` and
-`brevier.flatpakrepo` beside it carry the same key. Clients refuse anything not signed by
-it and any commit older than the one installed. Losing the key means no more updates
-until everyone installs again with a new one, so a copy lives off the machine.
-
-The mark is `assets/brevier.svg`, and every raster icon is drawn from it: after changing
-the mark, run `packaging/icons.py` (Inkscape and Pillow), which redraws the Android
-launcher icons at every density, the store icon in `fastlane/` and the Windows icon
-`packaging/windows/brevier.ico`. It also refuses a mark
-that is not an outline, not square, or whose gradient is not flat — what saving from
-Inkscape tends to bring back; CI runs the same check with `--check`.
-
-Releases are built by CI from a tag (`.github/workflows/release.yml`), not on a laptop. A
-release `vX.Y.Z` needs the version in `Cargo.toml`, a `<release>` entry in the metainfo,
-notes in `packaging/notes/vX.Y.Z.md`, a store changelog in
-`fastlane/metadata/android/en-US/changelogs/<versionCode>.txt` (`X·10000 + Y·100 + Z`), the
-same number as `versionCode` in `android/app/build.gradle.kts` (F-Droid reads it there; the
-build checks it against the version), and the version in the README's download links; CI
-checks the tag against `Cargo.toml`, builds the tarball, the Flatpak, the signed APK, the
-Windows installer and zip, and the command line alone for Linux, macOS and Windows
-(`packaging/cli.sh`, each archive opening a page where it was built), and publishes them
-with `SHA256SUMS`. Before the files are
-published, the Windows job installs the installer on a clean Windows, starts the window and
-uninstalls it again; a manual run of the workflow keeps a screenshot of that window. A published tag is never moved: something newer is a new
-version.
-
-After the GitHub release, the same workflow publishes the crate to
-[crates.io](https://crates.io/crates/brevier) with trusted publishing: crates.io accepts
-GitHub's token for `release.yml` in this repository, so no crates.io token is kept in the
-secrets. A manual run only packages the crate (`cargo publish --dry-run`). The `exclude`
-list in `Cargo.toml` keeps the corpus, the Android app, the site and the packaging out of
-the crate; `cargo package --list` shows what goes in. A published version can be yanked
-but never replaced.
+Releases are built from version tags by `.github/workflows/release.yml`. Before tagging,
+update the version in `Cargo.toml` and `android/app/build.gradle.kts`, add release notes in
+`packaging/notes/vX.Y.Z.md`, and update the Android store changelog under `fastlane/`.
+The release workflow builds and publishes the signed APK only, then refreshes the project
+website. Do not add desktop packages or public CLI distribution; the Linux CLI is for
+internal parser validation.
 
 ## License
 
-Contributions are licensed as the project is: MIT OR Apache-2.0, at the user's option. The
-sign-off on each commit (see above) records where the contribution came from; no separate
-agreement is asked for. The bundled fonts are under the SIL Open Font License, and `assets/fonts/OFL-NotoSans.txt` must
-travel with any distribution.
+Contributions are licensed under MIT OR Apache-2.0, at your option. The bundled fonts are
+under the SIL Open Font License; `assets/fonts/OFL-NotoSans.txt` must travel with any
+copy you distribute.

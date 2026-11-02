@@ -8,7 +8,7 @@ copied here verbatim from its `dictionaries/` directory.
 alone (`embed_en-us`, ~89 KB) or every language it knows (`embed_all`, ~2.2 MB).
 Brevier needs only English and Russian, so it embeds English through the feature
 and loads this one file at runtime with `Standard::from_reader`. That is 131 KB
-instead of 2.2 MB in `brevier-ui`, for the same result — the same reason the
+instead of 2.2 MB in the Android library, for the same result — the same reason the
 program ships its own fonts rather than trust the machine to have them.
 
 Adding a language later means adding its `<lang>.standard.bincode` here the same

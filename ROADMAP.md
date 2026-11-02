@@ -205,44 +205,17 @@ a selection that holds a table puts the table in its place as rows of tab-separa
 cells, which pastes as text or into a spreadsheet. Android finds in tables the same
 way. The window no longer knows less than the saved file.
 
-### 10. The companion extension (#5)
+### 10. The companion extension (#5) — deferred
 
-A WebExtension for Firefox and Chrome with one menu item, "Read in Brevier". It
-takes the page as the browser finally rendered it and hands it over native messaging
-to `brevier-ui --stdin <url>`, address included, for the links. JavaScript runs in
-the browser that already has it; Brevier still has no engine.
-
-The one menu item answers three things at once: SPA sites; pages behind a login —
-the browser is logged in, and Brevier never holds a cookie; and how people find
-Brevier in the first place — from the browser they already use, one page at a time,
-until the reading moves.
-
-Work items:
-
-- the extension itself, Manifest V3, submitted to both stores — after reading what
-  they say about code written with AI, as was done for Flathub and F-Droid
-- the native-messaging host: a small binary, its manifest installed by `install.sh`,
-  by the Windows installer (per user, in the registry, no UAC) and, for the Flatpak, a
-  wrapper script on the host that calls `flatpak run` — the browser wants an
-  executable outside the sandbox. A browser in a sandbox of its own — Ubuntu's Firefox
-  is a snap, Flathub's browsers are Flatpaks — is a cost to measure before promising
-- the same path from the command line, so `--stdin` and the extension are one code
-  path with two front doors. The cli has it; the window does not yet, and a page has
-  to reach the window already running, together with its address
-
-On the phone the front door exists already: "Open in Brevier" from the browser's menu
-or the share sheet. What the extension adds — pages built by scripts, pages behind a
-login — has no way in there: Firefox for Android takes extensions, but not native
-messaging.
-
-Habr's comments (#40) arrive only when Brevier fetches the page itself. A page handed
-over by the extension touches no network, so either that path asks for them too, or the
-reader is told. Later, perhaps: "always read this site in Brevier", for the sites a
-reader visits most.
+The proposed native-messaging extension depended on a desktop Brevier host and CLI
+distribution. Both were retired with desktop support in 2026. Android's existing
+"Open in Brevier" share and link intents remain the supported handoff; an Android-only
+extension design would need its own proposal.
 
 ### 11. Updates on Linux (#1)
 
-Done. The Flatpak updates from Brevier's own repository rather than from a store:
+Retired in 2026. Until the Android-only distribution change, the Flatpak updated from
+Brevier's own repository rather than from a store:
 `flatpak install --user https://brevier.bizibah.com/flatpak/brevier.flatpakref` once,
 then `flatpak update`, GNOME Software or Discover bring every release. The site rebuilds
 the repository from each release's bundle; its commits and summary are signed, and the
@@ -257,10 +230,8 @@ search: Brevier is not one search away in the store apps. The submission waited 
 Wayland (#12), which is done; it can be taken up again if the policy or the project's
 age changes.
 
-Two cheaper doors alongside: crates.io (`cargo install brevier --features ui`, published
-since 0.12.0), and the cli as one
-file per release for Linux, macOS and Windows, since 0.15.0 — `brevier` links neither
-GTK nor OpenSSL. Published on tags, not on pushes.
+The crates.io package and public CLI release archives were also retired in 2026. The
+Linux CLI remains in the source tree only for internal parser checks on the VPS and CI.
 
 ### 12. Reading progress (#19)
 
@@ -429,18 +400,9 @@ Written after the check has run on enough sites to know which findings matter.
 
 ### Android
 
-A second front-end, not a second build — which is what separates it from the two
-desktop builds below. The core crosses as it is: the library links no toolkit, its
-dependencies are Rust the whole way down, and the dependency graph for
-`aarch64-linux-android` holds no X11, no fontconfig, no GTK. CI cross-compiles it into
-a shared library for arm64 on every push so that it stays that way, long before
-anybody writes the front-end.
-
-The window does not cross. GTK's Android backend is experimental, and the interaction
-is keyboard and mouse throughout — Ctrl+L, a tooltip on hover, a middle click, a
-divider dragged to width. None of those exist on a phone. So the front-end is native,
-Kotlin over the core, and what travels with the core is the typographic model: the
-measure is stated in ems rather than pixels, and it holds wherever it is drawn.
+Android is the only supported application. The Kotlin app uses the shared Rust core
+through JNI. The dependency graph for `aarch64-linux-android` holds no X11, no
+fontconfig, no GTK; CI cross-compiles it into a shared library for arm64 on every push.
 
 It draws the article itself, in native text, rather than handing it to a WebView. The
 WebView is the cheaper road and an honest one to weigh: our Markdown, our HTML, our
@@ -452,20 +414,13 @@ on two platforms. Drawing it natively is direct work rather than clever work: th
 hands a front-end a parsed structure instead of a blob of text, and the type is already
 a handful of constants.
 
-Nor is that front-end as large as the desktop window makes it look. Of the window's
-five thousand lines, a quarter draw the article; the rest are tabs, the session,
-history, the shelf, search, zoom and system glue, and a first release on a phone needs
-almost none of it.
-
 Two things argue for the platform rather than merely allowing it. That measure — 36
-ems, some 65 characters — is a phone's natural column instead of a compromise on it.
-And accessibility improves rather than degrades: native views speak to TalkBack, so
-the gap the README states for every platform but Linux closes here instead of widening.
+ems, some 65 characters — is a phone's natural column. Native views speak to TalkBack,
+though TalkBack has not yet been tested.
 
 A spike has run, so what follows is measured rather than assumed. The core builds for
-`aarch64-linux-android` and links into a 6 MB shared library; two JNI entry points are
-enough for a phone to read a page; and the failure texts in the core serve an Android
-front-end unchanged, which is what they were put in the core for.
+`aarch64-linux-android` and links into a shared library; the failure texts in the core
+serve the app unchanged.
 
 Three of the four seams are small: the folders learn a fourth place, for which
 `BREVIER_DATA_DIR` is the hook and it exists already; font fallback beyond the shipped
@@ -482,23 +437,11 @@ upstream and open (rustls/rustls-platform-verifier#221). That leaves three ways:
 for the fix, patch the Kotlin component we already ship, or stop delegating trust to
 the operating system — and the third costs a promise, so it is not a way.
 
-### macOS and Windows
+### Desktop applications (retired)
 
-Windows has a build since 0.8.0, an installer and a zip; macOS not yet. GTK 4 runs on
-both and the fonts ship inside the binary, so the typography holds. What does not hold is accessibility: GTK
-speaks AT-SPI, and VoiceOver and NVDA do not listen. The builds ship with that stated
-in the README, the way the Linux-only note is stated today. Whether the gap is later
-closed with a second front-end is a question for when there are readers on those
-platforms to ask.
-
-With them comes the extra-root setting (#18): a certificate the reader adds, valid
-only for the hosts they list next to it. On Linux "install the root in the system"
-is the answer; on the other two it stops being an obvious instruction.
-
-### Print
-
-`Ctrl+P`, in the reader's own type, through GTK's print dialog. A PDF falls out of
-it for free.
+Linux and Windows desktop builds and the GTK window were retired in 2026. The project
+does not publish or support desktop applications. The Linux CLI is retained only for
+internal parser validation.
 
 ### Gemini
 
@@ -524,16 +467,14 @@ Recorded so that nobody rediscovers them in six months.
 
 - **Authenticated reading** goes through the companion extension. Brevier never
   holds a cookie or any other credential.
-- **Platforms:** Linux first, updated from Brevier's own Flatpak repository (item 11);
-  then Android, as a second front-end over
-  the same core rather than another build of the same window — readers read on phones,
-  and it is the one platform where accessibility improves rather than degrades; macOS
-  and Windows builds after that, with their accessibility gap stated rather than hidden.
+- **Platforms:** Android is the only supported end-user application. Desktop builds and
+  public CLI distribution were retired in 2026; the Linux CLI remains internal for parser
+  validation on the VPS and in CI.
 - **The Android front-end draws the article itself**, in native text rather than in a
   WebView: the type is a promise of the product, and a browser engine is precisely what
   the program exists to do without.
 - **The archive** is on by default and compressed.
-- **The check** gives a number, 0 to 100, with the arithmetic printed.
+- **The internal parser check** gives a number, 0 to 100, with the arithmetic printed.
 - **The alternate-Markdown link** is followed. A second request for a page that then
   needs no extraction is a good trade.
 - **Requests are measured by reason, not counted.** "One page per request from a
@@ -546,7 +487,7 @@ Recorded so that nobody rediscovers them in six months.
   with pages in the corpus, and no plugin system around them. This supersedes the
   earlier flat refusal of per-site rules.
 - **Type is a setting; zoom is shared.** Face, size, measure, leading and justified
-  text persist in `settings.tsv`; the zoom step is one for the window, applied to
+  text persist in `settings.tsv`; the zoom step is one for Android, applied to
   every page, for the run only — not per host, and not saved. (Per-host zoom was
   tried and dropped: it only made the next page open at a surprising size.)
 - **A page read in the last week opens from a copy on disk**, images included —

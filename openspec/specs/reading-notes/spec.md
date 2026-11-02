@@ -7,19 +7,19 @@ Lets readers keep notes and pictures beside the passages they annotate, then exp
 ## Requirements
 
 ### Requirement: Notes stay beside the passages they annotate
-Brevier SHALL show each note near its annotated passage and adapt its placement to the available reading width.
+Brevier SHALL show each note below the paragraph containing its annotated passage in the Android reader, regardless of available reading width.
 
 #### Scenario: Show notes in a wide window
-- **WHEN** a reader opens a page with notes in a window wide enough for a margin
-- **THEN** Brevier places each note beside the line where its passage begins
+- **WHEN** a reader opens a page with notes in the Android app on a wide display
+- **THEN** each note appears under its annotated paragraph rather than in a separate margin
 
 #### Scenario: Show notes when the window is narrow
-- **WHEN** the available width is too small for a notes margin
-- **THEN** Brevier places each note under its annotated paragraph without preventing the reader from narrowing the window
+- **WHEN** a reader opens a page with notes in the Android app on a narrow display
+- **THEN** each note appears under its annotated paragraph without preventing the reader from using the available width
 
 #### Scenario: Read a page without notes
-- **WHEN** a reader opens a page with no notes in a wide window
-- **THEN** Brevier keeps the article centered instead of reserving an empty notes margin
+- **WHEN** a reader opens a page with no notes in the Android app
+- **THEN** Brevier does not reserve empty space for a notes margin
 
 ### Requirement: Notes can keep pictures
 Brevier SHALL let readers attach pictures to notes and display those pictures with the note without adding them to the article.

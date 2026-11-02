@@ -548,7 +548,7 @@ impl Marks {
         let mut out = String::from("# Bookmarks\n\n");
         if self.marks.is_empty() {
             out.push_str(
-                "Nothing here yet. The star (**Ctrl+D** in the window) keeps the page \
+                "Nothing here yet. The star in the Android app keeps the page \
                  you are reading; press it again to take the page off this list.\n",
             );
             return out;

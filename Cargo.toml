@@ -8,11 +8,11 @@ description = "A browser for reading: it turns a page into clean text on your ow
 repository = "https://github.com/gurov/brevier"
 homepage = "https://brevier.bizibah.com/"
 readme = "README.md"
-keywords = ["browser", "reader", "readability", "markdown", "gtk"]
-categories = ["command-line-utilities", "gui", "text-processing"]
-# В крейт — только то, из чего собираются cli и окно: исходники, шрифты,
-# словари переносов, знак. Корпус, телефон, сайт, упаковка и снимки
-# экрана живут в репозитории, а не в `cargo install`.
+publish = false
+keywords = ["browser", "reader", "readability", "markdown"]
+categories = ["command-line-utilities", "text-processing"]
+# Core and internal CLI sources stay in the repository; end-user distribution
+# is the Android app, built from `android/`.
 exclude = [
     "/corpus",
     "/fuzz",
@@ -21,13 +21,11 @@ exclude = [
     "/packaging",
     "/fastlane",
     "/.github",
-    "/action.yml",
     "/assets/screenshot-*",
     "/assets/brevier.jpeg",
 ]
 
-# Ядро — библиотека, интерфейс и cli — потребители. Разделение записано
-# в архитектуре: тулкит должен сидеть на краю.
+# Ядро — библиотека, Android и внутренний cli — потребители.
 [lib]
 name = "brevier"
 path = "src/lib.rs"
@@ -36,21 +34,13 @@ path = "src/lib.rs"
 name = "brevier"
 path = "src/main.rs"
 
-# Окно — отдельный бинарник за фичей: ядро и cli собираются без GTK,
-# и корпус M0 продолжает гонять тот же `brevier`, что и раньше.
-[[bin]]
-name = "brevier-ui"
-path = "src/ui/gtk.rs"
-required-features = ["ui"]
-
 # Тракт окна и телефона на странице с диска — для `corpus/frozen.py`.
-# Пример, а не бинарник: `cargo install` его не ставит.
+# Example, not a binary target: it supports offline layout checks.
 [[example]]
 name = "lay"
 required-features = ["typeset", "images"]
 
 [features]
-ui = ["dep:gtk", "dep:pango", "typeset", "images", "save"]
 # Типографика окна: переносы по языку. Отдельной фичей — cli и корпус
 # в ней не нуждаются, а паттерны переносов лишний вес в их бинарнике.
 typeset = ["dep:hyphenation"]
@@ -71,10 +61,6 @@ dom_smoothie = "0.18.2"
 # Лента в чужой кодировке (koi8-r, cp1251 в объявлении XML): тот же крейт,
 # которым `ureq` перекодирует страницы, — в сборке он и так есть.
 encoding_rs = "0.8"
-# `v4_10` — ради родного диалога подтверждения (`GtkAlertDialog`). GTK 4.10
-# вышел в марте 2023; требовать его дешевле, чем городить своё окно с двумя
-# кнопками, которое ещё и доступность потеряет.
-gtk = { version = "0.11.4", package = "gtk4", features = ["v4_10"], optional = true }
 htmd = "0.5.5"
 # Архив прочитанного (#8): LZ4 стандартным кадром, чтобы копию открывал
 # обычный `lz4 -d`. Чистый Rust и без `unsafe` (`safe-*`) — по той же
@@ -98,11 +84,3 @@ zip = { version = "9", default-features = false, features = ["deflate-flate2"], 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.22"
 rustls-platform-verifier = "0.7"
-
-# Windows: гарнитуры из комплекта окно отдаёт самой Pango
-# (`pango_font_map_add_font_file`, 1.56) — fontconfig, через который это
-# делается на Linux, там шрифтов не раздаёт. Тот же крейт, что внутри `gtk`,
-# только с фичей 1.56. Не для всех целей: на Linux она требовала бы Pango
-# 1.56 при сборке, а окно обещает GTK 4.10.
-[target.'cfg(windows)'.dependencies]
-pango = { version = "0.22", features = ["v1_56"], optional = true }

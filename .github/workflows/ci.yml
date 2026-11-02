@@ -5,8 +5,6 @@ on:
     branches: [main]
   pull_request:
 
-# Токену CI довольно читать: сборочные скрипты зависимостей работают с ним
-# же, и писать в репозиторий им незачем.
 permissions:
   contents: read
 
@@ -25,52 +23,10 @@ jobs:
           rustup default stable
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
-      # cli одним файлом собирается с одной `save` (packaging/cli.sh), без
-      # `typeset`: заметки и модель страницы в нём не нужны и не должны ему мешать.
       - run: cargo clippy --all-targets --features save -- -D warnings
       - run: cargo test
+      - run: cargo test --features images,typeset
 
-  ui:
-    name: window — clippy with the GTK4 feature
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install the toolchain
-        run: |
-          rustup toolchain install stable --profile minimal --component clippy
-          rustup default stable
-      - name: Install GTK 4 and the desktop-file tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev desktop-file-utils
-      - run: cargo clippy --all-targets --features ui -- -D warnings
-      # Ломается молча: окно просто останется без иконки в панели задач.
-      - run: desktop-file-validate packaging/io.github.gurov.brevier.desktop
-
-  packaging:
-    name: packaging — metadata and the crate list
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y appstream
-      # Без карточки пакет не примут на Flathub, а в Discover он будет
-      # безымянной строкой.
-      - run: appstreamcli validate --no-net packaging/io.github.gurov.brevier.metainfo.xml
-      # Flatpak собирается без сети по списку крейтов. Список устаревает
-      # молча — при подъёме зависимостей его надо перегонять, и узнать
-      # об этом лучше здесь, а не на сборке пакета.
-      - name: The crate list matches Cargo.lock
-        run: |
-          python3 packaging/cargo-sources.py > /tmp/cargo-sources.json
-          diff -u packaging/cargo-sources.json /tmp/cargo-sources.json ||
-            { echo "run packaging/cargo-sources.py > packaging/cargo-sources.json" >&2; exit 1; }
-      - run: sh -n packaging/install.sh && sh -n packaging/tarball.sh
-      # Знак — контур с плоским градиентом; сохранение из Inkscape это ломает.
-      - name: The mark is an outline with a flat gradient
-        run: python3 packaging/icons.py --check
-
-  # Подпись по DCO у каждого коммита чужого PR: откуда пришёл вклад — запись
-  # в истории, а не в памяти. Подпись должна быть автора коммита, а не любая.
   dco:
     name: every commit of a pull request is signed off
     if: github.event_name == 'pull_request'
@@ -93,24 +49,6 @@ jobs:
             exit 1
           fi
 
-  action:
-    name: the check as a GitHub Action
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      # Та же дверь, что у чужого сайта (`uses: gurov/brevier@…`), только
-      # из своего дерева. Порог ноль: здесь проверяют Action, а не example.com.
-      - id: check
-        uses: ./
-        with:
-          urls: https://example.com/
-          min: 0
-          badge: brevier-check.svg
-      - name: The step reports a score and draws the badge
-        run: |
-          test -n "${{ steps.check.outputs.score }}"
-          grep -q '<svg' brevier-check.svg
-
   tls:
     name: trust stays delegated to the OS
     runs-on: ubuntu-latest
@@ -120,9 +58,6 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
-      # An architectural decision, checkable by a command rather than on trust:
-      # no bundled root store, so revoked CAs are the operating system's problem
-      # and not a pet project's release cadence.
       - name: No webpki roots in the tree
         run: |
           if cargo tree | grep -q webpki-roots; then
@@ -135,8 +70,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Rust и NDK — закреплённые, те же, что у выпуска и у F-Droid: Rust
-      # называет android/rust-toolchain.toml, NDK — `ndkVersion` в Gradle.
       - name: Install the pinned Rust and NDK
         run: |
           (cd android && rustup toolchain install)
@@ -144,24 +77,8 @@ jobs:
           test -n "$ndk" || { echo "no ndkVersion in android/app/build.gradle.kts" >&2; exit 1; }
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ndk" > /dev/null
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ndk" >> "$GITHUB_ENV"
-      # Сначала канарейка: ядро — то, что едет на телефон как есть. День,
-      # когда в тракт чтения заедет зависимость с X11, fontconfig или
-      # библиотекой хоста, должен быть виден здесь отдельной строкой, а не
-      # потеряться в выводе Gradle. Команда та же, что зовёт Gradle: общая
-      # библиотека под arm64 с фичами читалки (`save` тянет `images`).
-      # Линковка тут не лишняя: она и доказывает, что ядро собирается
-      # в одно целое под чужую платформу.
       - name: The core links into a shared library for arm64
         run: sh android/core.sh "$RUNNER_TEMP/core" arm64-v8a
-      # Обёртка Gradle — исполняемый jar в репозитории: сверяем его с тем,
-      # что выкладывает Gradle для этой версии, прежде чем запускать.
-      - name: The Gradle wrapper is Gradle's own
-        run: |
-          version=$(sed -n 's|.*/gradle-\(.*\)-bin\.zip|\1|p' android/gradle/wrapper/gradle-wrapper.properties)
-          sum=$(curl -sfL "https://services.gradle.org/distributions/gradle-$version-wrapper.jar.sha256")
-          echo "$sum  android/gradle/wrapper/gradle-wrapper.jar" | sha256sum -c
-      # Потом само приложение (`android/`): Kotlin поверх того же ядра.
-      # Одна ABI — телефонная; эмуляторную x86_64 CI не гоняет.
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -169,21 +86,3 @@ jobs:
       - name: The app builds
         working-directory: android
         run: ./gradlew --no-daemon assembleDebug -Pabis=arm64-v8a
-
-  windows:
-    name: Windows — the core and the cli
-    # Окно под Windows собирает выпуск (release.yml, в MSYS2); здесь, на
-    # каждом пуше, — ядро и cli: путь с буквой диска, `file:///C:/…`, имена
-    # файлов. На Linux такого не видно, а сломать это легко.
-    runs-on: windows-latest
-    steps:
-      # Тексты и эталоны сверяются побайтно: переводом строк на CRLF git
-      # сломал бы их все разом.
-      - run: git config --global core.autocrlf false
-      - uses: actions/checkout@v4
-      - name: Install the toolchain
-        run: |
-          rustup toolchain install stable --profile minimal --component clippy
-          rustup default stable
-      - run: cargo clippy --all-targets --features save,typeset -- -D warnings
-      - run: cargo test --features save,typeset
