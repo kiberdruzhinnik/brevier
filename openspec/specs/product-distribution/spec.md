@@ -7,11 +7,12 @@ Defines which Brevier applications are offered to end users and preserves a Linu
 ## Requirements
 
 ### Requirement: Android is the only supported end-user application
-Brevier SHALL offer Android as its only installable application for end users.
+Brevier SHALL offer Android as its only installable application for end users and SHALL distribute the Android APK exclusively through GitHub Releases, with no project website or F-Droid channel.
 
 #### Scenario: Get a Brevier app release
-- **WHEN** a reader gets a public Brevier application release
-- **THEN** the release provides the Android app and does not offer desktop application packages
+- **WHEN** a reader looks for Brevier project information or an app release
+- **THEN** the project information is available in the GitHub repository and the Android APK is available from GitHub Releases, with no project website or F-Droid listing
+- **AND** the release does not offer desktop application packages
 
 ### Requirement: The Linux CLI is reserved for internal parser validation
 Brevier SHALL keep a Linux CLI for maintainers to check parser behavior on Linux hosts, but SHALL NOT distribute the CLI as a public product through binary releases, crates.io, or the GitHub Action.

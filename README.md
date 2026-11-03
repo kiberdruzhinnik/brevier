@@ -16,16 +16,13 @@ site CSS, and needs no account.
 
 The same Rust core handles fetching, extraction, conversion, and the page model. Pages are
 converted to Markdown on your device and rendered as native text. Why it is built this way
-is in the [manifesto](MANIFESTO.md); what comes next is in the [roadmap](ROADMAP.md). A
-short tour is at [brevier.bizibah.com](https://brevier.bizibah.com/).
+is in the [manifesto](MANIFESTO.md). Brevier is a fork of
+[gurov/brevier](https://github.com/gurov/brevier).
 
 ## Install
 
-Brevier supports Android 7 and later on 64-bit ARM devices. Install it from
-[F-Droid](https://f-droid.org/packages/io.github.gurov.brevier/) to receive updates there,
-or get the APK from [GitHub Releases](https://github.com/gurov/brevier/releases/latest).
-The APK from either source can update the same installation when signed with the release
-key.
+Brevier supports Android 7 and later on 64-bit ARM devices. Download the APK from
+[GitHub Releases](https://github.com/kiberdruzhinnik/brevier/releases/latest).
 
 ## Read
 
@@ -51,8 +48,7 @@ CI. It is not distributed as a user application. Build and test instructions are
 ## Contributing
 
 Bug reports and patches are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
-Android and core build instructions, the [roadmap](ROADMAP.md), and issues labelled
-`roadmap`.
+Android and core build instructions.
 
 ## License
 

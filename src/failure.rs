@@ -52,7 +52,7 @@ pub fn tripped() -> String {
          Something in this page set off a bug in Brevier, so it can't be shown here. \
          The page itself is probably fine, and your browser can still show it.\n\n\
          To help fix it, report the address at \
-         [github.com/gurov/brevier/issues](https://github.com/gurov/brevier/issues).\n"
+         [github.com/kiberdruzhinnik/brevier/issues](https://github.com/kiberdruzhinnik/brevier/issues).\n"
     )
 }
 

@@ -1595,7 +1595,7 @@ mod tests {
             stand_in
                 .links
                 .iter()
-                .any(|link| link.target == "https://github.com/gurov/brevier/issues")
+                .any(|link| link.target == "https://github.com/kiberdruzhinnik/brevier/issues")
         );
     }
 

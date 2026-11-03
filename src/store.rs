@@ -674,7 +674,7 @@ impl Default for Settings {
             images: true,
             shelf: true,
             shelf_width: None,
-            // Включён по умолчанию: решено в ROADMAP. Выключить есть чем.
+            // Включён по умолчанию. Выключить есть чем.
             archive: true,
             plain_archive: false,
             slide_bar: true,

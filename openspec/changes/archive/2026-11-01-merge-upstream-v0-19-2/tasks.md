@@ -17,7 +17,7 @@
 
 - [x] 3.1 Set compile and target SDK to API 36 while keeping `minSdk = 24`, and route Back through the invoked dispatcher on Android 13+ with the legacy callback on older versions; verify with Gradle build and APK metadata inspection.
 - [x] 3.2 Upgrade ZIP writing to version 9 and reconcile Cargo, fuzz, Gradle, and packaging locks/source lists; verify locked dependency resolution and existing ZIP writer tests.
-- [x] 3.3 Set the release version to 0.19.2 and Android version code to 1902, then update Fastlane and package release metadata; verify Gradle's version-code consistency check and metadata validation.
+- [x] 3.3 Set the release version to 0.19.2 and Android version code to 1902, then update package release metadata; verify Gradle's version-code consistency check and metadata validation.
 
 ## 4. Reconcile and verify the fork
 

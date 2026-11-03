@@ -8,7 +8,7 @@ arrives wrapped in the site's type, the site's colours, the site's scripts and t
 site's advertising, and the reader takes what is given.
 
 Brevier is for the second half only. These are its commitments. Some of them are
-ahead of the code — the roadmap says which, and the README says what runs today.
+ahead of the code; the README says what runs today.
 
 ## 1. The reader sets the type
 

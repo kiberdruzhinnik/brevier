@@ -9,7 +9,7 @@
 ## 2. Preserve internal parser checks and Android delivery
 
 - [x] 2.1 Keep a Linux CLI build path for VPS and internal CI parser checks, including public-share parsing; verify it can be built and run against the saved Cloud Mail and Yandex share examples and the corpus check.
-- [x] 2.2 Retain Android NDK, release, and F-Droid build paths and update any affected build configuration; verify the Android release build produces an installable APK for the existing supported Android versions.
+- [x] 2.2 Retain Android NDK and release build paths and update any affected build configuration; verify the Android release build produces an installable APK for the existing supported Android versions.
 - [x] 2.3 Remove desktop-only and public Action CI jobs while retaining Linux core/parser checks and Android build checks; verify the resulting workflow definitions parse and the retained jobs run successfully.
 
 ## 3. Align reading notes with Android-only support

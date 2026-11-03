@@ -15,8 +15,7 @@ val coreVersion: String = Regex("""(?m)^version\s*=\s*"([^"]+)"""")
     ?: error("no version in Cargo.toml")
 
 // Номер версии для Android выводится из неё же (0.5.2 → 502), но записан
-// числом: F-Droid узнаёт о выпуске, читая его из этого файла регэкспом,
-// и выражение Gradle не вычислит. Gradle сверяет число с версией ниже.
+// числом: Gradle сверяет его с версией ниже.
 val derivedVersionCode: Int = coreVersion.split('.').fold(0) { code, part -> code * 100 + part.toInt() }
 
 // Какие ABI собирать: `-Pabis=x86_64` ускоряет сборку для эмулятора.
@@ -35,9 +34,7 @@ val signing: Properties? = System.getenv("BREVIER_SIGNING")
     ?.takeIf { it.isNotBlank() }
     ?.let { path -> Properties().apply { file(path).inputStream().use { load(it) } } }
 
-// …кроме выпуска для F-Droid: тот собирает без подписи и подписывает сам —
-// или, раз сборка воспроизводима, переносит на свой файл нашу подпись
-// из Releases. Отсюда явное `-Punsigned`, и только оно.
+// Неподписанный выпуск нужен для проверки воспроизводимости в CI.
 val unsigned: Boolean = (findProperty("unsigned") as String?)?.let { it != "false" } ?: false
 
 // Имя файла — то, что человек скачает: brevier-0.2.0-arm64.apk, а не
@@ -58,8 +55,8 @@ fun apkName(buildType: String): String {
 
 // Ядро собирает cargo, а не Gradle: это та же команда, что у канарейки в CI.
 // NDK — тот, что назван `ndkVersion` ниже, а не первый попавшийся: на раннере
-// GitHub ANDROID_NDK_HOME смотрит в свой, у F-Droid свой, и библиотека
-// выходила бы разной.
+// GitHub ANDROID_NDK_HOME смотрит в свой, а у мейнтейнера может быть другой;
+// библиотека выходила бы разной.
 val buildCore by tasks.registering(Exec::class) {
     description = "Builds the Brevier core as a shared library for each ABI"
     workingDir = repo
@@ -94,19 +91,12 @@ android {
         ndk { abiFilters += abis }
     }
 
-    // Тот же NDK в CI, у F-Droid и на машине мейнтейнера: иначе ядро
-    // собирается разными компиляторами, и воспроизводимой сборки нет.
+    // Тот же NDK в CI и на машине мейнтейнера: иначе ядро собирается
+    // разными компиляторами, и воспроизводимой сборки нет.
     ndkVersion = "29.0.14206865"
 
     // `core.sh` уже стрипает ядро тем же NDK; второй проход AGP лишний.
     packaging { jniLibs { keepDebugSymbols += "**/libbrevier.so" } }
-
-    // Блок зависимостей для Google Play — шифрованный ключом Google, читать
-    // его некому, кроме Play. F-Droid такой APK не принимает.
-    dependenciesInfo {
-        includeInApk = false
-        includeInBundle = false
-    }
 
     sourceSets["main"].apply {
         // Гарнитуры и их лицензия входят в Android-приложение вместе.
@@ -128,8 +118,8 @@ android {
 
     buildTypes {
         release {
-            // R8 выбрасывает неиспользуемый код (просьба ревьюера F-Droid).
-            // Всё, что зовут по JNI, он не видит, — правила в proguard-rules.pro
+            // R8 выбрасывает неиспользуемый код. Всё, что зовут по JNI, он
+            // не видит, — правила в proguard-rules.pro
             // и у модуля rustls-platform-verifier.
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

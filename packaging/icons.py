@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Растровые иконки из знака: Android (все плотности) и витрина F-Droid.
+"""Растровые иконки из знака для Android (все плотности).
 
     packaging/icons.py                 # проверить assets/brevier.svg и перерисовать всё
     packaging/icons.py --check         # только проверить знак, ничего не писать
@@ -20,8 +20,6 @@
 - иконка до Android 8: бумага в скруглённом квадрате на всё поле 48 dp,
   радиус 8.4 dp, холст знака 32.5 dp по центру (дробный пиксель
   отбрасывается — так были сделаны прежние, проверено на всех плотностях);
-- витрина (`fastlane/…/icon.png`, 512 px): бумага во весь квадрат, холст
-  в той же доле видимой части, что на рабочем столе, — 56 dp из 72;
 """
 import os
 import re
@@ -32,7 +30,6 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SVG = os.path.join(ROOT, 'assets', 'brevier.svg')
 RES = os.path.join(ROOT, 'android', 'app', 'src', 'main', 'res')
-STORE = os.path.join(ROOT, 'fastlane', 'metadata', 'android', 'en-US', 'images', 'icon.png')
 PAPER = (0xfa, 0xf5, 0xea, 255)
 DENSITIES = {'mdpi': 1.0, 'hdpi': 1.5, 'xhdpi': 2.0, 'xxhdpi': 3.0, 'xxxhdpi': 4.0}
 
@@ -89,12 +86,6 @@ def legacy(scale, tmp):
     return centered(paper, render(int(32.5 * scale), tmp))
 
 
-def store(tmp):
-    from PIL import Image
-
-    return centered(Image.new('RGBA', (512, 512), PAPER), render(round(512 * 56 / 72), tmp))
-
-
 def main():
     problems = check(open(SVG, encoding='utf-8').read())
     if problems:
@@ -108,8 +99,7 @@ def main():
             folder = os.path.join(RES, f'mipmap-{name}')
             foreground(scale, tmp).save(os.path.join(folder, 'ic_launcher_foreground.png'), optimize=True)
             legacy(scale, tmp).save(os.path.join(folder, 'ic_launcher.png'), optimize=True)
-        store(tmp).convert('RGB').save(STORE, optimize=True)
-    print('android/app/src/main/res/mipmap-*/ic_launcher{,_foreground}.png, fastlane …/icon.png')
+    print('android/app/src/main/res/mipmap-*/ic_launcher{,_foreground}.png')
 
 
 if __name__ == '__main__':

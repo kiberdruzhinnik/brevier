@@ -1,1 +1,0 @@
-A reading browser: the web without JavaScript, set in your own type

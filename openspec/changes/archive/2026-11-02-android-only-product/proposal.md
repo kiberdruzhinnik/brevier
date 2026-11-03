@@ -9,7 +9,7 @@ Brevier's desktop apps and public CLI distributions create release, packaging, a
 - **BREAKING**: End user releases become Android-only; stop publishing Linux and Windows desktop apps and cross-platform CLI binaries.
 - **BREAKING**: Stop publishing the standalone CLI crate and remove the public GitHub Action.
 - Keep the Linux CLI in the repository for VPS parser validation, corpus checks, and internal Linux CI; do not advertise or release it as an end-user product.
-- Remove GTK desktop builds, desktop packaging, and desktop-specific CI/release jobs while retaining Android build, release, and F-Droid distribution.
+- Remove GTK desktop builds, desktop packaging, and desktop-specific CI/release jobs while retaining Android build and release.
 - Update product documentation and the project website to describe Android as the only supported app platform.
 - Update reading-notes behavior to describe Android's inline note placement without a desktop margin.
 

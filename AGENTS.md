@@ -18,9 +18,8 @@ reading the documentation of git repositories. A core library in Rust and an And
 (`android/`, Kotlin over the same core). The Linux CLI remains in the repository for
 maintainers' parser checks; it is not a public product.
 
-What it promises is in [MANIFESTO.md](MANIFESTO.md); where it is going and what has been
-settled is in [ROADMAP.md](ROADMAP.md), under "Decided". Where this file and those two
-disagree, they win.
+What it promises is in [MANIFESTO.md](MANIFESTO.md). Where this file and the manifesto
+disagree, the manifesto wins.
 
 ## Never
 
@@ -59,8 +58,8 @@ saying why it is the way it is: read it before simplifying. A few that agents te
   so every front-end says the same thing.
 - **Dependencies come without default features** when those bring weight; no `serde_json`
   in the core (`src/json.rs` exists for that).
-- **The wording of ROADMAP.md and MANIFESTO.md is the maintainer's.** Correct facts there;
-  do not rewrite, reorder or soften.
+- **The wording of MANIFESTO.md is the maintainer's.** Correct facts there; do not rewrite,
+  reorder or soften.
 
 ## What counts as checked
 

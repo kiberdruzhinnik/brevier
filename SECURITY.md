@@ -13,7 +13,7 @@ never replaced.
 
 ## How to tell a real Brevier
 
-- **Android:** the APK, from Releases and from F-Droid alike, is signed with the key
+- **Android:** the APK from GitHub Releases is signed with the key
   whose SHA-256 fingerprint is
   `30:A4:32:B8:2F:3E:F0:FC:E5:F4:68:1F:D7:F9:FE:20:5F:4B:17:A2:F4:34:19:C2:45:0C:A2:6B:E6:8D:34:80`.
 - **Releases:** every release lists `SHA256SUMS` for its files. Tags `v*` cannot be

@@ -37,6 +37,6 @@ See `proposal.md` for motivation and `specs/product-distribution/spec.md` plus `
 ## Migration Plan
 
 1. Remove desktop and public CLI publication paths, GTK integration, and retired public documentation while preserving internal Linux CLI uses.
-2. Keep Android CI/release/F-Droid and Linux parser-check paths; update `reading-notes` main spec when syncing the change.
+2. Keep Android CI/release and Linux parser-check paths; update `reading-notes` main spec when syncing the change.
 3. Validate repository references and workflow configuration, run the relevant Linux and Android checks, and produce the Android APK as the user-facing artifact.
 4. Rollback by restoring the retired distribution/workflow files from version control if Android or internal parser checking is blocked; no data migration is required.

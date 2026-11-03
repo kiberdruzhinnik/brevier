@@ -1,7 +1,7 @@
 # Contributing to Brevier
 
 Patches and bug reports are welcome. For product behavior, see the [README](README.md),
-[manifesto](MANIFESTO.md), and [roadmap](ROADMAP.md). Brevier is an Android app over a
+[manifesto](MANIFESTO.md). Brevier is an Android app over a
 shared Rust core. The Linux CLI is kept in the repository for maintainers' parser checks
 on Linux VPS hosts; it is not published or distributed as an app.
 
@@ -19,7 +19,6 @@ code are mostly in Russian; write yours in the language you are most exact in.
 - `android/` — the native Android app in Kotlin, using the shared core through JNI.
 - `corpus/` — saved regression expectations and scripts for checking parsers and extraction.
 - `fuzz/` — fuzz targets for parser and page-model invariants.
-- `fastlane/` — F-Droid metadata and store assets.
 
 ## Build and check the core
 
@@ -66,9 +65,10 @@ Gradle builds the Rust core through `android/core.sh`. The APK is written under
 ./gradlew assembleRelease -Pabis=arm64-v8a -Punsigned
 ```
 
-GitHub release builds sign the Android APK. F-Droid builds from source and publishes the
-same APK when its reproducibility check passes. Keep the pinned Rust, NDK, and JDK versions
-aligned with the F-Droid recipe.
+GitHub Releases is the only public APK channel. Release builds sign the Android APK; CI
+also checks that an unsigned build has the same contents, preserving release
+reproducibility. Keep the pinned Rust, NDK, and JDK versions aligned across local and CI
+builds.
 
 ## Before a pull request
 
@@ -97,10 +97,9 @@ code it exposed.
 
 Releases are built from version tags by `.github/workflows/release.yml`. Before tagging,
 update the version in `Cargo.toml` and `android/app/build.gradle.kts`, add release notes in
-`packaging/notes/vX.Y.Z.md`, and update the Android store changelog under `fastlane/`.
-The release workflow builds and publishes the signed APK only, then refreshes the project
-website. Do not add desktop packages or public CLI distribution; the Linux CLI is for
-internal parser validation.
+`packaging/notes/vX.Y.Z.md`. The release workflow builds and publishes the signed APK.
+Do not add desktop packages or public CLI distribution; the Linux CLI is for internal
+parser validation.
 
 ## License
 

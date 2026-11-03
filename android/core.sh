@@ -7,9 +7,9 @@
 # в ANDROID_NDK_HOME (Gradle передаёт сюда свой `ndkVersion`), иначе самый
 # свежий в SDK. Rust — из `android/rust-toolchain.toml`.
 #
-# Сборка воспроизводима: F-Droid собирает то же самое у себя и сверяет
-# побайтно с APK из Releases. Поэтому версии закреплены, а пути машины
-# в библиотеку не попадают.
+# Сборка воспроизводима: CI сравнивает неподписанную сборку с подписанным
+# APK из Releases. Поэтому версии закреплены, а пути машины в библиотеку
+# не попадают.
 set -e
 out=$1
 shift
@@ -30,7 +30,7 @@ bin=$ndk/toolchains/llvm/prebuilt/$(uname -s | tr 'A-Z' 'a-z')-x86_64/bin
 # сертификаты не знает отзыва.
 api=24
 
-# Gradle, запущенный не из оболочки (F-Droid, IDE), профиля не читал,
+# Gradle, запущенный не из оболочки (например, из IDE), профиля не читал,
 # и ~/.cargo/bin в его PATH нет.
 cargo_home=${CARGO_HOME:-$HOME/.cargo}
 command -v cargo >/dev/null 2>&1 || PATH=$cargo_home/bin:$PATH

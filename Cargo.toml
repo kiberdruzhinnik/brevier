@@ -5,8 +5,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.88"
 description = "A browser for reading: it turns a page into clean text on your own computer and sets it in the typography you chose, without JavaScript"
-repository = "https://github.com/gurov/brevier"
-homepage = "https://brevier.bizibah.com/"
+repository = "https://github.com/kiberdruzhinnik/brevier"
 readme = "README.md"
 publish = false
 keywords = ["browser", "reader", "readability", "markdown"]
@@ -17,9 +16,7 @@ exclude = [
     "/corpus",
     "/fuzz",
     "/android",
-    "/site",
     "/packaging",
-    "/fastlane",
     "/.github",
     "/assets/screenshot-*",
     "/assets/brevier.jpeg",
