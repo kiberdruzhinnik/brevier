@@ -28,7 +28,15 @@ object Core {
      * не смогла даже ответить (так ведёт себя arm64-ядро под трансляцией
      * на x86_64-эмуляторе): это отказ одной картинки, а не повод падать.
      */
-    external fun image(source: String, width: Int, paper: Int, fontSize: Float, natural: Boolean): ByteArray?
+    private var sharedCacheEnabled = false
+    private external fun imageNative(source: String, width: Int, paper: Int, fontSize: Float, natural: Boolean, privateCache: Boolean): ByteArray?
+
+    fun setSharedCacheEnabled(enabled: Boolean) {
+        sharedCacheEnabled = enabled
+    }
+
+    fun image(source: String, width: Int, paper: Int, fontSize: Float, natural: Boolean): ByteArray? =
+        imageNative(source, width, paper, fontSize, natural, !sharedCacheEnabled)
     private external fun find(text: String, needle: String): IntArray
 
     /**
@@ -69,8 +77,8 @@ object Core {
      * Смещение от UTC в секундах — ядро пишет его в журнал рядом со временем.
      * `fresh` — мимо недельной копии на диске, прямо из сети (перезагрузка).
      */
-    fun open(address: String, fresh: Boolean = false): JSONObject =
-        obj("open", utcOffset(), address, if (fresh) "1" else "0")
+    fun open(address: String, fresh: Boolean = false, sharedCache: Boolean = false, sharedMarkdown: String? = null): JSONObject =
+        obj("open", utcOffset(), address, if (fresh) "1" else "0", if (sharedCache) "1" else "0", sharedMarkdown ?: "")
     fun follow(here: String, target: String): JSONObject = obj("follow", here, target)
 
     /**

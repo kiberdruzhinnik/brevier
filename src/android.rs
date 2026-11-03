@@ -193,7 +193,7 @@ pub extern "system" fn Java_io_github_gurov_brevier_Core_call<'caller>(
 /// (по четыре байта, big-endian), затем RGBA построчно. `1`: причина отказа
 /// в UTF-8 — её показывают на месте картинки.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_io_github_gurov_brevier_Core_image<'caller>(
+pub extern "system" fn Java_io_github_gurov_brevier_Core_imageNative<'caller>(
     mut unowned: EnvUnowned<'caller>,
     _class: JClass<'caller>,
     source: JString<'caller>,
@@ -201,6 +201,7 @@ pub extern "system" fn Java_io_github_gurov_brevier_Core_image<'caller>(
     paper: i32,
     font_size: f32,
     natural: bool,
+    private_cache: bool,
 ) -> JByteArray<'caller> {
     let outcome = unowned.with_env(|env| -> Result<JByteArray<'caller>, JniError> {
         let source = source.try_to_string(env)?;
@@ -212,7 +213,7 @@ pub extern "system" fn Java_io_github_gurov_brevier_Core_image<'caller>(
             // Телефон считает в пикселях экрана сразу.
             density: 1.0,
         };
-        let bytes = deep(move || image(&source, look));
+        let bytes = deep(move || image(&source, look, private_cache));
         env.byte_array_from_slice(&bytes)
     });
     outcome.resolve::<ThrowRuntimeExAndDefault>()
@@ -270,7 +271,13 @@ fn call(method: &str, arg: &str) -> String {
         "typography" => typography(),
         "intro" => intro(),
         "parse" => parse(arg),
-        "open" => open(field(0).parse().unwrap_or(0), field(1), field(2) == "1"),
+        "open" => open(
+            field(0).parse().unwrap_or(0),
+            field(1),
+            field(2) == "1",
+            field(3) == "1",
+            fields.get(4).copied().filter(|text| !text.is_empty()),
+        ),
         "follow" => follow(field(0), field(1)),
         "suggest" => suggest(arg),
         "title" => title(arg),
@@ -585,7 +592,13 @@ fn failure_json(failure: &crate::failure::Failure, external: Option<String>) -> 
 
 /// Открыть адрес: недельная копия или сеть, извлечение, раскладка — и запись
 /// в журнал. `fresh` — мимо копии, прямо из сети (перезагрузка).
-fn open(offset: i32, typed: &str, fresh: bool) -> String {
+fn open(
+    offset: i32,
+    typed: &str,
+    fresh: bool,
+    shared_enabled: bool,
+    shared_markdown: Option<&str>,
+) -> String {
     let address = match address::parse(typed) {
         Ok(address) => address,
         Err(error) => return failure_json(&describe(&error), None),
@@ -593,27 +606,44 @@ fn open(offset: i32, typed: &str, fresh: bool) -> String {
     let external = address.external();
     let anchor = page::anchor_in(&address);
     let disk = Cache::open();
-    let copy = (!fresh).then(|| disk.page(&address)).flatten();
-    let saved = copy.as_ref().map(|copy| copy.saved);
+    let shared = if !fresh && shared_enabled {
+        shared_markdown.and_then(|text| cache::read_shared(&address, text))
+    } else {
+        None
+    };
+    let copy = if !fresh && !shared_enabled {
+        disk.page(&address)
+    } else {
+        None
+    };
+    let saved = shared
+        .as_ref()
+        .map(|copy| copy.saved)
+        .or_else(|| copy.as_ref().map(|copy| copy.saved));
     // Копия в архиве (#8) — только у свежей загрузки: страница из недельного
     // кэша уже лежит в архиве, и строка журнала укажет на ту же копию.
     let mut archived = None;
-    let document = match copy {
+    let document = match shared {
         Some(copy) => copy.document,
-        None => match crate::open(&address, UserAgent::Honest) {
-            Ok(document) => {
-                disk.keep(&address, &document);
-                // Сжатой всегда (#43): архив в закрытой папке приложения,
-                // простой файл другим программам не виден.
-                if Settings::load().archive {
-                    archived = Archive::open().keep(&document, &Stamp::now(offset));
+        None => match copy {
+            Some(copy) => copy.document,
+            None => match crate::open(&address, UserAgent::Honest) {
+                Ok(document) => {
+                    if !shared_enabled {
+                        disk.keep(&address, &document);
+                    }
+                    // Сжатой всегда (#43): архив в закрытой папке приложения,
+                    // простой файл другим программам не виден.
+                    if Settings::load().archive {
+                        archived = Archive::open().keep(&document, &Stamp::now(offset));
+                    }
+                    document
                 }
-                document
-            }
-            Err(error) => {
-                let failure = describe_page(&error, &address, &Archive::open());
-                return failure_json(&failure, Some(external));
-            }
+                Err(error) => {
+                    let failure = describe_page(&error, &address, &Archive::open());
+                    return failure_json(&failure, Some(external));
+                }
+            },
         },
     };
     let page = Page::guarded(&document);
@@ -690,6 +720,14 @@ fn open(offset: i32, typed: &str, fresh: bool) -> String {
     links_json(&mut out, &document.site);
     out.push_str(",\"feeds\":");
     links_json(&mut out, &document.feeds);
+    if shared_enabled
+        && saved.is_none()
+        && let Some(markdown) =
+            cache::shared_record(&address, &document, std::time::SystemTime::now())
+    {
+        out.push_str(",\"sharedMarkdown\":");
+        json_string(&mut out, &markdown);
+    }
     if let Some(directory) = repo::directory_of(&document.address) {
         out.push_str(",\"directory\":");
         entry_json(&mut out, "Files in this directory", &directory);
@@ -1247,7 +1285,7 @@ fn source_of(source: &str) -> Source {
 }
 
 /// Скачать или взять из кэша, затем разобрать.
-fn image(source: &str, look: Look) -> Vec<u8> {
+fn image(source: &str, look: Look, private_cache: bool) -> Vec<u8> {
     let source = source_of(source);
     let cached = match &source {
         Source::Web(url) => core().blobs.get(url),
@@ -1255,20 +1293,25 @@ fn image(source: &str, look: Look) -> Vec<u8> {
     };
     // Нет в памяти — недельная копия на диске, её тоже в память.
     let disk = Cache::open();
-    let cached = cached.or_else(|| match &source {
-        Source::Web(url) => disk.image(url).map(|bytes| {
-            let bytes = Arc::new(bytes);
-            core().blobs.put(url.clone(), bytes.clone());
-            bytes
-        }),
-        Source::File(_) => None,
+    let cached = cached.or_else(|| {
+        if !private_cache {
+            return None;
+        }
+        match &source {
+            Source::Web(url) => disk.image(url).map(|bytes| {
+                let bytes = Arc::new(bytes);
+                core().blobs.put(url.clone(), bytes.clone());
+                bytes
+            }),
+            Source::File(_) => None,
+        }
     });
     let decoded = match cached {
         Some(bytes) => media::decode(&bytes, None, look),
         // В кэш — только то, что разобралось: битые байты хранить незачем.
         None => media::grab(&source, UserAgent::Honest).and_then(|(bytes, mime)| {
             let raster = media::decode(&bytes, mime.as_deref(), look)?;
-            if let Source::Web(url) = &source {
+            if private_cache && let Source::Web(url) = &source {
                 disk.keep_image(url, &bytes);
                 core().blobs.put(url.clone(), Arc::new(bytes));
             }

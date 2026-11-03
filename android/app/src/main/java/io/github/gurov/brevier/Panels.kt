@@ -488,6 +488,8 @@ class SettingsPage(
     private val slid: (on: Boolean) -> Unit,
     private val notesUnder: (on: Boolean) -> Unit,
     private val keepCopies: (on: Boolean) -> Unit,
+    private val sharedCacheChanged: (on: Boolean) -> Unit,
+    private val chooseSharedFolder: () -> Unit,
     private val forget: () -> Unit,
     private val browser: () -> Unit,
     private val typeChanged: (ReaderType) -> Unit,
@@ -507,7 +509,7 @@ class SettingsPage(
         addView(column)
     }
 
-    fun show(palette: Palette, theme: Theme, images: Boolean, archive: Boolean, isBrowser: Boolean, reader: ReaderType, slideBar: Boolean, notes: Boolean) {
+    fun show(palette: Palette, theme: Theme, images: Boolean, archive: Boolean, sharedCache: Boolean, sharedFolderSelected: Boolean, isBrowser: Boolean, reader: ReaderType, slideBar: Boolean, notes: Boolean) {
         this.dark = theme.dark
         this.theme = theme
         this.images = images
@@ -569,6 +571,18 @@ class SettingsPage(
             "Each article you read is kept as a compressed Markdown file — your copy, next to the page in the history — so you can read it and search it even when the site is gone. Off: new pages are not kept; what is there stays.",
             switch(palette, archive) { on -> keepCopies(on) }, palette,
         ))
+        column.addView(row(
+            "Shared Markdown cache",
+            if (sharedFolderSelected) "Keep the current article Markdown in a folder other apps can access. Images are not copied." else "Choose a shared folder to keep and open cached article Markdown there. Images are not copied.",
+            button(if (sharedFolderSelected) "Change folder" else "Choose folder", palette.ink, palette) { chooseSharedFolder() }, palette,
+        ))
+        if (sharedFolderSelected) {
+            column.addView(row(
+                "Use shared folder for cache",
+                "On: cached articles are read from this folder. Off: Brevier uses its private cache.",
+                switch(palette, sharedCache) { on -> sharedCacheChanged(on) }, palette,
+            ))
+        }
         column.addView(row(
             "Forget everything you have read",
             "The list at brevier:history goes away, the address bar stops suggesting those pages, and the copies of what you read are deleted. Bookmarks, with their copies, and open tabs stay.",

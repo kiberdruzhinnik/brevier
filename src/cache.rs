@@ -57,6 +57,185 @@ pub struct Saved {
     pub saved: SystemTime,
 }
 
+/// A self-contained Markdown copy read from Android's shared document folder.
+#[derive(Debug, Clone)]
+pub struct SharedCopy {
+    pub document: Document,
+    pub saved: SystemTime,
+}
+
+/// Stable URL identity shared by fragment variants of the same article.
+pub fn shared_identity(address: &Address) -> Option<String> {
+    match address {
+        Address::Web(url) => Some(url.split('#').next().unwrap_or(url).to_owned()),
+        Address::Repo(_) => Some(
+            address
+                .display()
+                .split('#')
+                .next()
+                .unwrap_or_default()
+                .to_owned(),
+        ),
+        Address::File(_) | Address::Internal(_) => None,
+    }
+}
+
+/// A plain Markdown document with enough metadata to restore its source identity.
+pub fn shared_record(asked: &Address, document: &Document, now: SystemTime) -> Option<String> {
+    if !worth_keeping(document) {
+        return None;
+    }
+    let identity = shared_identity(asked)?;
+    let saved = now.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let mut out = format!(
+        "---\nbrevier-cache: 1\nkey: {}\nsource: {}\ntitle: {}\nsaved: {saved}\nserved: {}\n",
+        yaml_string(&identity),
+        yaml_string(&document.address.display()),
+        yaml_string(&document.title),
+        u8::from(document.served),
+    );
+    if let Some(lang) = &document.lang {
+        out.push_str(&format!("lang: {}\n", yaml_string(lang)));
+    }
+    for link in &document.site {
+        out.push_str(&format!(
+            "site-address: {}\nsite-title: {}\n",
+            yaml_string(&link.address),
+            yaml_string(&link.title),
+        ));
+    }
+    for link in &document.feeds {
+        out.push_str(&format!(
+            "feed-address: {}\nfeed-title: {}\n",
+            yaml_string(&link.address),
+            yaml_string(&link.title),
+        ));
+    }
+    if let Some(link) = &document.next {
+        out.push_str(&format!(
+            "next-address: {}\nnext-title: {}\n",
+            yaml_string(&link.address),
+            yaml_string(&link.title),
+        ));
+    }
+    out.push_str("---\n\n");
+    out.push_str(document.markdown.trim_end());
+    out.push('\n');
+    Some(out)
+}
+
+/// Read a shared Markdown copy only when its front matter matches the requested URL.
+pub fn read_shared(asked: &Address, text: &str) -> Option<SharedCopy> {
+    let (header, markdown) = text.strip_prefix("---\n")?.split_once("\n---\n")?;
+    let markdown = markdown.strip_prefix('\n').unwrap_or(markdown);
+    let value = |name: &str| {
+        header.lines().find_map(|line| {
+            line.strip_prefix(name)
+                .and_then(|value| value.strip_prefix(": "))
+        })
+    };
+    if value("brevier-cache")? != "1" {
+        return None;
+    }
+    let key = yaml_unstring(value("key")?).ok()?;
+    if Some(key) != shared_identity(asked) {
+        return None;
+    }
+    let address = address::parse(&yaml_unstring(value("source")?).ok()?).ok()?;
+    let title = yaml_unstring(value("title")?).ok()?;
+    let saved = value("saved")?.parse::<u64>().ok()?;
+    let list = |field: &str| -> Option<Vec<String>> {
+        header
+            .lines()
+            .filter_map(|line| {
+                line.strip_prefix(field)
+                    .and_then(|value| value.strip_prefix(": "))
+            })
+            .map(|value| yaml_unstring(value).ok())
+            .collect()
+    };
+    let links = |address_field: &str, title_field: &str| -> Option<Vec<Link>> {
+        let addresses = list(address_field)?;
+        let titles = list(title_field)?;
+        if addresses.len() != titles.len() {
+            return None;
+        }
+        Some(
+            addresses
+                .into_iter()
+                .zip(titles)
+                .map(|(address, title)| Link { address, title })
+                .collect(),
+        )
+    };
+    let site = links("site-address", "site-title")?;
+    let feeds = links("feed-address", "feed-title")?;
+    let next = match (value("next-address"), value("next-title")) {
+        (None, None) => None,
+        (Some(address), Some(title)) => Some(Link {
+            address: yaml_unstring(address).ok()?,
+            title: yaml_unstring(title).ok()?,
+        }),
+        _ => return None,
+    };
+    Some(SharedCopy {
+        document: Document {
+            address,
+            title,
+            markdown: markdown.to_owned(),
+            kind: Kind::Article,
+            served: value("served")? == "1",
+            site,
+            feeds,
+            lang: value("lang").map(yaml_unstring).transpose().ok()?,
+            next,
+            archived: None,
+        },
+        saved: UNIX_EPOCH + Duration::from_secs(saved),
+    })
+}
+
+fn yaml_string(value: &str) -> String {
+    let mut quoted = String::with_capacity(value.len() + 2);
+    quoted.push('"');
+    for character in value.chars() {
+        match character {
+            '\\' => quoted.push_str("\\\\"),
+            '"' => quoted.push_str("\\\""),
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            '\t' => quoted.push_str("\\t"),
+            other => quoted.push(other),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
+fn yaml_unstring(value: &str) -> Result<String, ()> {
+    let inner = value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .ok_or(())?;
+    let mut decoded = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(character) = chars.next() {
+        if character != '\\' {
+            decoded.push(character);
+            continue;
+        }
+        decoded.push(match chars.next().ok_or(())? {
+            '\\' => '\\',
+            '"' => '"',
+            'n' => '\n',
+            'r' => '\r',
+            't' => '\t',
+            _ => return Err(()),
+        });
+    }
+    Ok(decoded)
+}
+
 /// Кэш прочитанного: две папки, страницы и картинки. `None` — положить
 /// некуда (нет домашней папки); тогда кэша просто нет, а чтение идёт как шло.
 #[derive(Debug, Clone)]
@@ -427,6 +606,47 @@ mod tests {
             }),
             archived: None,
         }
+    }
+
+    #[test]
+    fn shared_markdown_roundtrips_source_title_and_body() {
+        let asked = Address::Web("https://e.com/a#section".to_owned());
+        let document = article("https://e.com/a");
+        let now = UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+        let text = shared_record(&asked, &document, now).unwrap();
+        let restored =
+            read_shared(&Address::Web("https://e.com/a#other".to_owned()), &text).unwrap();
+
+        assert_eq!(restored.document.address, document.address);
+        assert_eq!(restored.document.title, document.title);
+        assert_eq!(restored.document.markdown, document.markdown);
+        assert_eq!(restored.saved, now);
+        assert_eq!(restored.document.served, document.served);
+        assert_eq!(restored.document.lang, document.lang);
+        assert_eq!(restored.document.site, document.site);
+        assert_eq!(restored.document.feeds, document.feeds);
+        assert_eq!(restored.document.next, document.next);
+        assert!(text.ends_with("# A title\n\nFirst paragraph.\n\n\nAfter a gap.\n"));
+    }
+
+    #[test]
+    fn shared_markdown_identity_ignores_fragments_but_separates_urls() {
+        let first = Address::Web("https://e.com/a#first".to_owned());
+        let same = Address::Web("https://e.com/a#second".to_owned());
+        let other = Address::Web("https://e.com/b#first".to_owned());
+        assert_eq!(shared_identity(&first), shared_identity(&same));
+        assert_ne!(shared_identity(&first), shared_identity(&other));
+        let record = shared_record(&first, &article("https://e.com/a"), SystemTime::now()).unwrap();
+        assert!(read_shared(&other, &record).is_none());
+    }
+
+    #[test]
+    fn shared_markdown_rejects_bad_metadata() {
+        let page = Address::Web("https://e.com/a".to_owned());
+        let valid = shared_record(&page, &article("https://e.com/a"), SystemTime::now()).unwrap();
+        assert!(read_shared(&page, "not markdown cache data").is_none());
+        assert!(read_shared(&page, &valid.replace("saved: ", "saved: nope # ")).is_none());
+        assert!(read_shared(&page, &valid.replace("key:", "wrong-key:")).is_none());
     }
 
     #[test]

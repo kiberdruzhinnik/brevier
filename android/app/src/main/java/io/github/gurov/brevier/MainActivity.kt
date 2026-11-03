@@ -53,6 +53,7 @@ import java.io.File
  */
 class MainActivity : Activity(), ArticleHost {
     private val type by lazy { Typography.shared }
+    private val sharedMarkdownFolder by lazy { SharedMarkdownFolder(this) }
     private lateinit var fonts: Fonts
     private val main = Handler(Looper.getMainLooper())
 
@@ -148,6 +149,7 @@ class MainActivity : Activity(), ArticleHost {
         assisted = assistance()
         images = stored.optBoolean("images", true)
         archive = stored.optBoolean("archive", true)
+        Core.setSharedCacheEnabled(sharedMarkdownFolder.enabled)
         reader = ReaderType.of(stored.getJSONObject("type"))
         zoom = type.zoomNormal
 
@@ -341,6 +343,8 @@ class MainActivity : Activity(), ArticleHost {
             slid = { on -> changeSlideBar(on) },
             notesUnder = { on -> changeNotesShown(on) },
             keepCopies = { on -> archive = on; Core.saveSettings(dark, images, archive, contrast, slideBar, notesShown) },
+            sharedCacheChanged = { on -> sharedMarkdownFolder.enable(on); Core.setSharedCacheEnabled(on); showSettings() },
+            chooseSharedFolder = { chooseSharedFolder() },
             forget = { forgetEverything() },
             browser = { askToBeBrowser() },
             typeChanged = { chosen -> changeType(chosen) },
@@ -720,13 +724,21 @@ class MainActivity : Activity(), ArticleHost {
         tickLoading(tab, generation, 1)
 
         App.work.execute {
-            val loaded = try {
-                Loaded.of(Core.open(address, fresh), address)
+            val result = try {
+                val useSharedCache = sharedMarkdownFolder.enabled
+                val cachedMarkdown = if (useSharedCache && !fresh) sharedMarkdownFolder.read(address) else null
+                val response = Core.open(address, fresh, useSharedCache, cachedMarkdown)
+                val record = response.optString("sharedMarkdown").takeIf { it.isNotEmpty() && it != "null" }
+                val writeFailed = useSharedCache && response.optBoolean("ok") && record != null &&
+                    !sharedMarkdownFolder.write(address, record)
+                Loaded.of(response, address) to writeFailed
             } catch (failure: Throwable) {
                 null
             }
             main.post {
                 if (tab.generation != generation || tab !in tabs) return@post
+                val loaded = result?.first
+                val sharedWriteFailed = result?.second == true
                 when {
                     loaded == null -> {
                         tab.loading = false
@@ -737,8 +749,12 @@ class MainActivity : Activity(), ArticleHost {
                     loaded.ok -> {
                         if (!loaded.internal) tab.pages[address] = loaded
                         showDocument(tab, loaded)
+                        if (sharedWriteFailed) notice("The article opened, but its Markdown copy could not be saved")
                     }
-                    else -> showDocument(tab, loaded)
+                    else -> {
+                        showDocument(tab, loaded)
+                        if (sharedWriteFailed) notice("The article opened, but its Markdown copy could not be saved")
+                    }
                 }
             }
         }
@@ -1833,7 +1849,22 @@ class MainActivity : Activity(), ArticleHost {
 
     private fun showSettings() {
         showBar()
-        settings.show(palette, theme, images, archive, isBrowser(), reader, slideBar, notesShown)
+        settings.show(palette, theme, images, archive, sharedMarkdownFolder.enabled, sharedMarkdownFolder.selected, isBrowser(), reader, slideBar, notesShown)
+    }
+
+    /** The system grants access only to the folder the reader picks. */
+    private fun chooseSharedFolder() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
+            sharedMarkdownFolder.tree?.let { putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, it) }
+        }
+        try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(intent, SHARED_FOLDER)
+        } catch (failure: ActivityNotFoundException) {
+            notice("No app offers folder access")
+        }
     }
 
     /** Шапке — уезжать или стоять (#45). */
@@ -2180,6 +2211,22 @@ class MainActivity : Activity(), ArticleHost {
             if (resultCode == RESULT_OK && uri != null) attachNotePicture(id, uri)
             return
         }
+        if (requestCode == SHARED_FOLDER) {
+            val uri = data?.data
+            if (resultCode == RESULT_OK && uri != null) {
+                val flags = data.flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                try {
+                    contentResolver.takePersistableUriPermission(uri, flags)
+                    sharedMarkdownFolder.select(uri)
+                    Core.setSharedCacheEnabled(true)
+                    showSettings()
+                    notice("Shared Markdown cache enabled")
+                } catch (failure: SecurityException) {
+                    notice("Folder access could not be saved")
+                }
+            }
+            return
+        }
         if (requestCode == PICTURE) {
             val file = pendingPicture ?: return
             pendingPicture = null
@@ -2364,6 +2411,7 @@ class MainActivity : Activity(), ArticleHost {
         private const val ROLE = 2
         private const val PICTURE = 3
         private const val NOTE_PICTURE = 4
+        private const val SHARED_FOLDER = 5
 
         /** Самая большая картинка, которую берём в заметку из галереи. */
         const val MAX_PICTURE = 64L * 1024 * 1024
