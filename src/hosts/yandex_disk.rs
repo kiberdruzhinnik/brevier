@@ -20,6 +20,16 @@ pub enum Resource {
     Unsupported(String),
 }
 
+/// A validated page of a public folder listing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FolderPage {
+    pub total: usize,
+    pub offset: usize,
+    pub items: usize,
+}
+
+pub const FOLDER_PAGE_SIZE: usize = 1000;
+
 /// Recognize a public Disk file or folder link, leaving unrelated Yandex pages alone.
 pub fn share(url: &str) -> Option<Share> {
     let parsed = Url::parse(url).ok()?;
@@ -50,7 +60,16 @@ pub fn share(url: &str) -> Option<Share> {
 
 /// Metadata endpoint for a public share or an entry inside a shared folder.
 pub fn metadata_api(url: &str) -> Option<String> {
-    api_url("resources", url)
+    metadata_page_api(url, FOLDER_PAGE_SIZE, 0)
+}
+
+/// Metadata endpoint for one page of a public folder.
+pub fn metadata_page_api(url: &str, limit: usize, offset: usize) -> Option<String> {
+    let mut api = Url::parse(&api_url("resources", url)?).ok()?;
+    api.query_pairs_mut()
+        .append_pair("limit", &limit.to_string())
+        .append_pair("offset", &offset.to_string());
+    Some(api.into())
 }
 
 /// Temporary download-link endpoint for a public PDF share.
@@ -125,29 +144,95 @@ pub fn download_url(response: &str) -> Option<String> {
 
 /// Turn public directory metadata into Atom, which Brevier already renders as a link listing.
 pub fn atom(metadata: &str, page_url: &str) -> Option<String> {
+    atom_pages(&[metadata.to_owned()], page_url)
+}
+
+/// Validate the pagination metadata returned for one requested folder page.
+pub fn folder_page(metadata: &str, expected_offset: usize) -> Option<FolderPage> {
     let root = json::parse(metadata)?;
     if root.text("type")? != "dir" {
         return None;
     }
+    let embedded = root.get("_embedded")?;
+    let total = integer(embedded.get("total")?)?;
+    let offset = integer(embedded.get("offset")?)?;
+    let items = embedded.get("items")?.as_array();
+    if offset != expected_offset || offset > total || items.len() > total - offset {
+        return None;
+    }
+    Some(FolderPage {
+        total,
+        offset,
+        items: items.len(),
+    })
+}
+
+fn integer(value: &json::Value) -> Option<usize> {
+    match value {
+        json::Value::Number(number) => number.parse().ok(),
+        _ => None,
+    }
+}
+
+/// Build a listing after fetching each required page in order.
+pub fn folder_listing<F, E>(
+    first: String,
+    page_url: &str,
+    mut fetch: F,
+) -> Result<Option<String>, E>
+where
+    F: FnMut(usize) -> Result<String, E>,
+{
+    let mut pages = vec![first];
+    let Some(first_page) = folder_page(&pages[0], 0) else {
+        return Ok(None);
+    };
+    let mut collected = first_page.items;
+    let total = first_page.total;
+    if collected == 0 && total != 0 {
+        return Ok(None);
+    }
+    while collected < total {
+        let next = fetch(collected)?;
+        let Some(page) = folder_page(&next, collected) else {
+            return Ok(None);
+        };
+        if page.total != total || page.items == 0 {
+            return Ok(None);
+        }
+        let Some(next_collected) = collected.checked_add(page.items) else {
+            return Ok(None);
+        };
+        collected = next_collected;
+        pages.push(next);
+    }
+    Ok(atom_pages(&pages, page_url))
+}
+
+fn atom_pages(metadata_pages: &[String], page_url: &str) -> Option<String> {
+    let root = json::parse(metadata_pages.first()?)?;
+    if root.text("type")? != "dir" {
+        return None;
+    }
     let title = root.text("name")?;
-    let entries = root.get("_embedded")?.get("items")?.as_array();
     let mut out = format!(
         "<feed xmlns=\"http://www.w3.org/2005/Atom\"><title>{}</title><link rel=\"self\" href=\"{}\" />",
         xml(title),
         xml(page_url),
     );
-    for entry in entries {
-        let (Some(name), Some(path)) = (entry.text("name"), entry.text("path")) else {
-            continue;
-        };
-        let Some(link) = entry_url(page_url, path) else {
-            continue;
-        };
-        out.push_str(&format!(
-            "<entry><title>{}</title><link href=\"{}\" /></entry>",
-            xml(name),
-            xml(&link),
-        ));
+    for metadata in metadata_pages {
+        let root = json::parse(metadata)?;
+        let entries = root.get("_embedded")?.get("items")?.as_array();
+        for entry in entries {
+            let name = entry.text("name")?;
+            let path = entry.text("path")?;
+            let link = entry_url(page_url, path)?;
+            out.push_str(&format!(
+                "<entry><title>{}</title><link href=\"{}\" /></entry>",
+                xml(name),
+                xml(&link)
+            ));
+        }
     }
     out.push_str("</feed>");
     Some(out)
@@ -213,12 +298,54 @@ mod tests {
         assert_eq!(query[0].1, "https://disk.yandex.ru/d/abc");
         assert_eq!(query[1].0, "path");
         assert_eq!(query[1].1, "/Books");
+        assert_eq!(query[2], ("limit".into(), "1000".into()));
+        assert_eq!(query[3], ("offset".into(), "0".into()));
+        let next =
+            Url::parse(&metadata_page_api("https://disk.yandex.ru/d/abc", 1000, 20).unwrap())
+                .unwrap();
+        assert!(
+            next.query_pairs()
+                .any(|(key, value)| key == "offset" && value == "20")
+        );
 
         let download = Url::parse(
             &download_api("https://disk.yandex.ru/d/abc?path=%2FBooks%2Fa.pdf").unwrap(),
         )
         .unwrap();
         assert_eq!(download.path(), "/v1/disk/public/resources/download");
+    }
+
+    #[test]
+    fn collects_all_pages_and_preserves_order_and_escaped_links() {
+        let first = r#"{"type":"dir","name":"Folder","_embedded":{"total":3,"offset":0,"items":[{"name":"A & B","path":"/A & B"},{"name":"Second","path":"/Second"}]}}"#.to_owned();
+        let listing = folder_listing(first, "https://disk.yandex.ru/d/share", |offset| {
+            assert_eq!(offset, 2);
+            Ok::<_, ()>(r#"{"type":"dir","name":"Folder","_embedded":{"total":3,"offset":2,"items":[{"name":"Third","path":"/Third"}]}}"#.to_owned())
+        }).unwrap().unwrap();
+        assert_eq!(listing.matches("<entry>").count(), 3);
+        assert!(listing.find("A &amp; B").unwrap() < listing.find("Second").unwrap());
+        assert!(listing.find("Second").unwrap() < listing.find("Third").unwrap());
+        assert!(listing.contains("path=%2FA+%26+B"));
+    }
+
+    #[test]
+    fn rejects_bad_or_inconsistent_folder_pagination() {
+        for json in [
+            r#"{"type":"dir","_embedded":{"items":[]}}"#,
+            r#"{"type":"dir","_embedded":{"total":2,"offset":1,"items":[{}]}}"#,
+            r#"{"type":"dir","_embedded":{"total":1,"offset":0,"items":[{},{}]}}"#,
+        ] {
+            assert_eq!(folder_page(json, 0), None);
+        }
+        let first = r#"{"type":"dir","name":"Folder","_embedded":{"total":2,"offset":0,"items":[{"name":"A","path":"/A"}]}}"#.to_owned();
+        assert_eq!(folder_listing(first, "https://disk.yandex.ru/d/share", |_| {
+            Ok::<_, ()>(r#"{"type":"dir","name":"Folder","_embedded":{"total":3,"offset":1,"items":[{"name":"B","path":"/B"}]}}"#.to_owned())
+        }).unwrap(), None);
+        let first = r#"{"type":"dir","name":"Folder","_embedded":{"total":2,"offset":0,"items":[{"name":"A","path":"/A"}]}}"#.to_owned();
+        assert_eq!(
+            folder_listing(first, "https://disk.yandex.ru/d/share", |_| Err("network")),
+            Err("network")
+        );
     }
 
     #[test]
@@ -258,12 +385,9 @@ mod tests {
     }
 
     #[test]
-    fn malformed_folder_entries_are_skipped() {
+    fn malformed_folder_entries_fail_the_listing() {
         let metadata = r#"{"type":"dir","name":"Folder","_embedded":{"items":[{"name":"ok","path":"/ok"},{"name":"bad","path":"relative"},{"path":"/missing-name"}]}}"#;
-        let feed = atom(metadata, "https://disk.yandex.ru/d/share").unwrap();
-        assert!(feed.contains("<title>ok</title>"));
-        assert!(!feed.contains("relative"));
-        assert!(!feed.contains("missing-name"));
+        assert_eq!(atom(metadata, "https://disk.yandex.ru/d/share"), None);
         assert_eq!(
             atom(
                 r#"{"type":"file","name":"x.pdf"}"#,

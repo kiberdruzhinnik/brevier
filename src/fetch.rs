@@ -226,7 +226,22 @@ pub fn readable(url: &str, ua: UserAgent) -> Result<Page, Error> {
         let metadata = binary(&api, ua, "application/json", MAX_BODY)?;
         let metadata = String::from_utf8_lossy(&metadata.bytes);
         match crate::hosts::yandex_disk::resource(&metadata, url) {
-            Some(crate::hosts::yandex_disk::Resource::Folder(body)) => {
+            Some(crate::hosts::yandex_disk::Resource::Folder(_)) => {
+                let body = crate::hosts::yandex_disk::folder_listing(
+                    metadata.to_string(),
+                    url,
+                    |offset| {
+                        let api = crate::hosts::yandex_disk::metadata_page_api(
+                            url,
+                            crate::hosts::yandex_disk::FOLDER_PAGE_SIZE,
+                            offset,
+                        )
+                        .ok_or(Error::EmptyExtraction)?;
+                        let page = binary(&api, ua, "application/json", MAX_BODY)?;
+                        Ok::<_, Error>(String::from_utf8_lossy(&page.bytes).into_owned())
+                    },
+                )?
+                .ok_or(Error::EmptyExtraction)?;
                 return Ok(Page {
                     url: url.to_owned(),
                     kind: ContentKind::Feed,
