@@ -47,6 +47,24 @@ When the reading progress strip is visible, the app SHALL display it at the scre
 - **WHEN** the article content fits within the available screen area
 - **THEN** the progress strip remains hidden at either toolbar position
 
+### Requirement: Status notices stay clear of the toolbar
+The Android app SHALL place status notices so they do not overlap the full navigation toolbar at either toolbar position.
+
+#### Scenario: Bottom toolbar is visible
+- **WHEN** a status notice appears while the full toolbar is positioned at the bottom
+- **THEN** the notice appears above the toolbar
+
+#### Scenario: Top toolbar is visible
+- **WHEN** a status notice appears while the full toolbar is positioned at the top
+- **THEN** the notice appears at the bottom edge, clear of the toolbar
+
+### Requirement: Reader can dismiss a status notice with a swipe
+The Android app SHALL allow the reader to dismiss a visible status notice by swiping it away.
+
+#### Scenario: Swipe away a notice
+- **WHEN** the reader swipes a visible status notice horizontally
+- **THEN** the notice is hidden immediately
+
 ### Requirement: Auto-hidden toolbar moves away from reading content
 When toolbar auto-hide is enabled, the toolbar SHALL slide off the screen edge where it is positioned and return when the reader invokes the toolbar.
 

@@ -28,6 +28,7 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.inputmethod.EditorInfo
@@ -42,6 +43,7 @@ import android.widget.ListPopupWindow
 import android.widget.PopupWindow
 import android.widget.TextView
 import java.io.File
+import kotlin.math.abs
 
 /**
  * Окно Brevier на телефоне: вкладки, адресная строка, статья, полка.
@@ -107,6 +109,7 @@ class MainActivity : Activity(), ArticleHost {
     private lateinit var needle: EditText
     private lateinit var tally: TextView
     private lateinit var notice: TextView
+    private var noticeReady = false
     /** Полоса прогресса под статьёй (#19). */
     private lateinit var strip: ProgressStrip
     /** Когда читатель последний раз трогал страницу: время чтения идёт, пока недавно (#19). */
@@ -317,7 +320,10 @@ class MainActivity : Activity(), ArticleHost {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(4f), dp(4f), dp(4f), dp(4f))
             addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
-                if (bottom - top != oldBottom - oldTop) fitUnderBar()
+                if (bottom - top != oldBottom - oldTop) {
+                    fitUnderBar()
+                    fitNoticePosition()
+                }
             }
         }
 
@@ -339,6 +345,7 @@ class MainActivity : Activity(), ArticleHost {
 
         notice = TextView(this).apply {
             visibility = View.GONE
+            isClickable = true
             typeface = fonts.regular
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setPadding(dp(14f), dp(10f), dp(14f), dp(10f))
@@ -348,6 +355,9 @@ class MainActivity : Activity(), ArticleHost {
             leftMargin = dp(16f)
             rightMargin = dp(16f)
         })
+        noticeReady = true
+        installNoticeSwipe()
+        fitNoticePosition()
 
         shelf = Shelf(this, fonts) { row -> pickShelf(row) }
         root.addView(shelf, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
@@ -540,6 +550,65 @@ class MainActivity : Activity(), ArticleHost {
         column.addView(findBar)
         currentTab()?.view?.reserve(bar.height, barBottom)
         placeBar(hidden)
+        fitNoticePosition()
+    }
+
+    /** Keep status notices clear of the toolbar at whichever screen edge it occupies. */
+    private fun fitNoticePosition() {
+        if (!noticeReady) return
+        val params = notice.layoutParams as? FrameLayout.LayoutParams ?: return
+        val margin = dp(20f) + if (barBottom) bar.height else 0
+        if (params.bottomMargin != margin) {
+            params.bottomMargin = margin
+            notice.layoutParams = params
+        }
+    }
+
+    /** A deliberate horizontal swipe dismisses the notice; taps remain clickable. */
+    private fun installNoticeSwipe() {
+        val slop = ViewConfiguration.get(this).scaledTouchSlop
+        var downX = 0f
+        var downY = 0f
+        var swiping = false
+        notice.setOnTouchListener { view, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = event.rawX
+                    downY = event.rawY
+                    swiping = false
+                    false
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - downX
+                    val dy = event.rawY - downY
+                    if (!swiping && abs(dx) > slop && abs(dx) > abs(dy)) swiping = true
+                    if (swiping) {
+                        view.translationX = dx
+                        true
+                    } else false
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (swiping) {
+                        val distance = abs(event.rawX - downX)
+                        if (distance >= maxOf(dp(48f).toFloat(), view.width * 0.25f)) {
+                            view.visibility = View.GONE
+                            view.translationX = 0f
+                        } else {
+                            view.animate().translationX(0f).setDuration(120L).start()
+                        }
+                        swiping = false
+                        true
+                    } else false
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    if (swiping) view.animate().translationX(0f).setDuration(120L).start()
+                    val consumed = swiping
+                    swiping = false
+                    consumed
+                }
+                else -> false
+            }
+        }
     }
 
     /** Панель: назад, адрес, полка, вкладки, меню. Значки перекрашиваются с темой. */
