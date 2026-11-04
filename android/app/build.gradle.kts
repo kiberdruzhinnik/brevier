@@ -18,10 +18,21 @@ val coreVersion: String = Regex("""(?m)^version\s*=\s*"([^"]+)"""")
 // числом: Gradle сверяет его с версией ниже.
 val derivedVersionCode: Int = coreVersion.split('.').fold(0) { code, part -> code * 100 + part.toInt() }
 
-// Какие ABI собирать: `-Pabis=x86_64` ускоряет сборку для эмулятора.
-val abis: List<String> = (findProperty("abis") as String?)
+// Выпуск для телефона содержит только arm64; отладка сохраняет ABI эмулятора.
+// Один и тот же список управляет сборкой ядра и содержимым APK.
+val requestedTasks = gradle.startParameter.taskNames.map { it.substringAfterLast(':') }
+val releaseRequested = requestedTasks.any {
+    it.contains("release", ignoreCase = true) || it.equals("assemble", ignoreCase = true) || it.equals("build", ignoreCase = true)
+}
+val debugRequested = requestedTasks.any { it.contains("debug", ignoreCase = true) }
+val selectedAbis = (findProperty("abis") as String?)
     ?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }
-    ?: listOf("arm64-v8a", "x86_64")
+val releaseAbis = listOf("arm64-v8a")
+if (releaseRequested && selectedAbis != null && selectedAbis != releaseAbis) {
+    error("Android release APKs support arm64-v8a only; remove -Pabis or use -Pabis=arm64-v8a")
+}
+val abis: List<String> = selectedAbis
+    ?: if (releaseRequested || !debugRequested) releaseAbis else listOf("arm64-v8a", "x86_64")
 
 val coreDir = layout.buildDirectory.dir("core")
 
@@ -122,6 +133,7 @@ android {
             // не видит, — правила в proguard-rules.pro
             // и у модуля rustls-platform-verifier.
             isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = if (unsigned) null else signingConfigs.findByName("release")
             // Корень Gradle — `android/`, а git — уровнем выше: AGP писал
@@ -150,6 +162,9 @@ android.applicationVariants.all {
 
 // Выпуск без ключа — сразу и словами, а не неподписанным файлом в конце.
 gradle.taskGraph.whenReady {
+    if (allTasks.any { it.project == project && it.name.contains("Release") } && abis != releaseAbis) {
+        throw GradleException("Android release APKs support arm64-v8a only; use -Pabis=arm64-v8a")
+    }
     if (signing == null && !unsigned && allTasks.any { it.project == project && it.name.contains("Release") && it.name.startsWith("assemble") }) {
         throw GradleException("A release is signed: set BREVIER_SIGNING to a properties file with storeFile, storePassword and keyAlias (or pass -Punsigned for an unsigned build)")
     }

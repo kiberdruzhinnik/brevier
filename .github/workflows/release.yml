@@ -63,7 +63,26 @@ jobs:
           echo "BREVIER_SIGNING=$dir/release.properties" >> "$GITHUB_ENV"
       - name: Build the APK
         working-directory: android
-        run: ./gradlew --no-daemon assembleRelease -Pabis=arm64-v8a
+        run: ./gradlew --no-daemon assembleRelease
+      - name: Check the APK contains only arm64-v8a native code
+        run: |
+          python3 - <<'PY'
+          from glob import glob
+          from zipfile import ZipFile
+
+          apks = glob("android/app/build/outputs/apk/release/brevier-*.apk")
+          if len(apks) != 1:
+              raise SystemExit(f"expected one release APK, found {len(apks)}")
+          with ZipFile(apks[0]) as apk:
+              abis = {
+                  name.split("/")[1]
+                  for name in apk.namelist()
+                  if name.startswith("lib/") and len(name.split("/")) > 2
+              }
+          if abis != {"arm64-v8a"}:
+              raise SystemExit(f"expected only arm64-v8a native code, found {sorted(abis)}")
+          print(f"{apks[0]} contains only arm64-v8a native code")
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: apk
@@ -95,7 +114,7 @@ jobs:
           java-version: 17
       - name: Build the APK unsigned
         working-directory: elsewhere/brevier/android
-        run: ./gradlew --no-daemon assembleRelease -Pabis=arm64-v8a -Punsigned
+        run: ./gradlew --no-daemon assembleRelease -Punsigned
       - uses: actions/download-artifact@v4
         with:
           name: apk

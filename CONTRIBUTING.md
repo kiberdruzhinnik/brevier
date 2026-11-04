@@ -55,15 +55,28 @@ Rust targets.
 ```sh
 export JAVA_HOME=… ANDROID_HOME=…
 cd android
-./gradlew assembleDebug -Pabis=arm64-v8a
+./gradlew assembleDebug
 ```
 
-Gradle builds the Rust core through `android/core.sh`. The APK is written under
-`android/app/build/outputs/apk/debug/`. For a release-shaped unsigned APK:
+The default debug build includes `arm64-v8a` and `x86_64` for phones and emulators.
+Use `-Pabis=x86_64` for an emulator-only build or `-Pabis=arm64-v8a` for a phone-only
+debug build. Gradle builds the Rust core through `android/core.sh`; debug APKs are written
+under `android/app/build/outputs/apk/debug/`.
+
+Release APKs contain `arm64-v8a` only. A signed release build uses the configured
+`BREVIER_SIGNING` properties file:
 
 ```sh
-./gradlew assembleRelease -Pabis=arm64-v8a -Punsigned
+./gradlew assembleRelease
 ```
+
+For a release-shaped unsigned APK:
+
+```sh
+./gradlew assembleRelease -Punsigned
+```
+
+Release builds reject x86_64 and multi-ABI selections.
 
 GitHub Releases is the only public APK channel. Release builds sign the Android APK; CI
 also checks that an unsigned build has the same contents, preserving release
