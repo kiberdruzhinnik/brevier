@@ -300,6 +300,9 @@ fn call(method: &str, arg: &str) -> String {
             if !field(4).is_empty() {
                 settings.slide_bar = field(4) == "1";
             }
+            if !field(5).is_empty() {
+                settings.bar_bottom = field(5) == "bottom";
+            }
             settings.save();
             "{}".to_owned()
         }
@@ -879,7 +882,7 @@ fn settings() -> String {
         })
         .collect();
     format!(
-        "{{\"dark\":{},\"contrast\":\"{}\",\"images\":{},\"archive\":{},\"slideBar\":{},\"type\":{},\
+        "{{\"dark\":{},\"contrast\":\"{}\",\"images\":{},\"archive\":{},\"slideBar\":{},\"barPosition\":\"{}\",\"type\":{},\
          \"styles\":[{}],\"style\":{},\
          \"faces\":[{}],\"sizes\":{},\"measures\":{},\"leadings\":{}}}",
         settings.dark,
@@ -891,6 +894,7 @@ fn settings() -> String {
         settings.images,
         settings.archive,
         settings.slide_bar,
+        if settings.bar_bottom { "bottom" } else { "top" },
         type_json(&chosen),
         styles.join(","),
         chosen.style().map_or(-1, |index| index as i64),

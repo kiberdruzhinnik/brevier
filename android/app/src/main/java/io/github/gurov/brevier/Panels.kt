@@ -430,6 +430,7 @@ class SettingsPage(
     private val changed: (dark: Boolean, images: Boolean) -> Unit,
     private val contrasted: (high: Boolean) -> Unit,
     private val slid: (on: Boolean) -> Unit,
+    private val positioned: (bottom: Boolean) -> Unit,
     private val keepCopies: (on: Boolean) -> Unit,
     private val sharedCacheChanged: (on: Boolean) -> Unit,
     private val chooseSharedFolder: () -> Unit,
@@ -452,7 +453,7 @@ class SettingsPage(
         addView(column)
     }
 
-    fun show(palette: Palette, theme: Theme, images: Boolean, archive: Boolean, sharedCache: Boolean, sharedFolderSelected: Boolean, isBrowser: Boolean, reader: ReaderType, slideBar: Boolean) {
+    fun show(palette: Palette, theme: Theme, images: Boolean, archive: Boolean, sharedCache: Boolean, sharedFolderSelected: Boolean, isBrowser: Boolean, reader: ReaderType, slideBar: Boolean, barBottom: Boolean) {
         this.dark = theme.dark
         this.theme = theme
         this.images = images
@@ -483,8 +484,13 @@ class SettingsPage(
             switch(palette, images) { on -> this.images = on; changed(this.dark, this.images) }, palette,
         ))
         column.addView(row(
+            "Toolbar position", "Choose where the full toolbar appears.",
+            choice(palette, "Toolbar position", listOf("Top", "Bottom"), if (barBottom) 1 else 0) { positioned(it == 1) }, palette,
+        ))
+        column.addView(row(
             "Slide the bar away",
-            "Reading down, the bar at the top moves out of the text's way as far as your finger goes; reading back up brings it back. Off: it stays put.",
+            if (barBottom) "Reading up, the bar at the bottom moves out of the text's way as far as your finger goes; reading back down brings it back. Off: it stays put."
+            else "Reading down, the bar at the top moves out of the text's way as far as your finger goes; reading back up brings it back. Off: it stays put.",
             switch(palette, slideBar) { on -> slid(on) }, palette,
         ))
         typeSection(palette, reader)
@@ -749,6 +755,7 @@ class Menu(
 ) {
     private val popup = PopupWindow(context)
     private val column = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+    private val scroll = ScrollView(context).apply { addView(column) }
     private val icons = LinearLayout(context).apply { gravity = Gravity.CENTER_VERTICAL }
 
     init {
@@ -759,7 +766,7 @@ class Menu(
         }
         column.setPadding(context.dp(4f), context.dp(4f), context.dp(4f), context.dp(6f))
         column.addView(icons)
-        popup.contentView = column
+        popup.contentView = scroll
         popup.isFocusable = true
         popup.isOutsideTouchable = true
         popup.setBackgroundDrawable(null)
@@ -816,8 +823,30 @@ class Menu(
         popup.width = minOf(context.dp(300f), context.resources.displayMetrics.widthPixels - context.dp(32f))
     }
 
-    fun show(anchor: View) {
-        popup.showAsDropDown(anchor, -context.dp(206f), -context.dp(4f))
+    fun show(anchor: View, above: Boolean = false) {
+        val width = popup.width
+        val location = IntArray(2)
+        anchor.getLocationInWindow(location)
+        val margin = context.dp(8f)
+        val statusInset = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            anchor.rootWindowInsets?.getInsets(android.view.WindowInsets.Type.statusBars())?.top ?: 0
+        } else {
+            @Suppress("DEPRECATION")
+            anchor.rootWindowInsets?.systemWindowInsetTop ?: 0
+        }
+        val available = (if (above) {
+            location[1] - statusInset - margin
+        } else {
+            anchor.rootView.height - location[1] - anchor.height - margin
+        }).coerceAtLeast(1)
+        scroll.measure(
+            View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(available, View.MeasureSpec.AT_MOST),
+        )
+        val height = scroll.measuredHeight.coerceAtMost(available)
+        popup.height = height
+        val verticalOffset = if (above) -height - anchor.height - margin else margin
+        popup.showAsDropDown(anchor, -context.dp(206f), verticalOffset)
     }
 
     /** Показать у точки на экране — там, где палец. Не за краем экрана. */

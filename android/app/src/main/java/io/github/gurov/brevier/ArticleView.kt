@@ -122,10 +122,11 @@ class ArticleView(context: Context, private val host: ArticleHost) : ScrollView(
     /**
      * Шапка лежит поверх статьи (#45): сверху у статьи поле в её рост
      * (`reserve`), текст под шапку уходит, не сдвигаясь, когда она уезжает.
-     * `covered` — сколько сверху закрыто шапкой сейчас: место чтения, прыжки
-     * и прочитанное меряются от её нижнего края (`visibleTop`).
+     * Covered space follows the toolbar edge: it defines visible reading bounds
+     * while the overlay moves without shifting the text beneath it.
      */
-    var covered = 0
+    var coveredTop = 0
+    var coveredBottom = 0
     /** Прокрутку ведёт палец: только её сдвиг достаётся шапке. */
     private var dragging = false
 
@@ -373,19 +374,23 @@ class ArticleView(context: Context, private val host: ArticleHost) : ScrollView(
     /** Где читатель: смещение строки у верхнего края. От масштаба не зависит. */
     fun place(): Int = offsetAt(visibleTop()) ?: 0
 
-    /** Поле сверху под шапку (#45): её полный рост. */
-    fun reserve(top: Int) {
-        if (paddingTop != top) setPadding(0, top, 0, 0)
+    /** Reserve the toolbar's edge so text can scroll clear of the overlay. */
+    fun reserve(size: Int, bottom: Boolean = false) {
+        val top = if (bottom) 0 else size
+        val lower = if (bottom) size else 0
+        if (paddingTop != top || paddingBottom != lower) setPadding(0, top, 0, lower)
     }
 
     /** Верх видимого — под шапкой, если она видна, — на высоте колонки. */
-    fun visibleTop(): Int = scrollY - paddingTop + covered
+    fun visibleTop(): Int = scrollY - paddingTop + coveredTop
 
-    /** Низ видимого на высоте колонки: снизу статью ничего не закрывает. */
-    fun visibleBottom(): Int = scrollY - paddingTop + height
+    /** Bottom of the visible article, excluding a bottom-positioned toolbar. */
+    fun visibleBottom(): Int = scrollY - paddingTop + height - coveredBottom
 
     /** Сколько статьи видно: окно без шапки. */
-    fun visibleHeight(): Int = height - covered
+    fun visibleHeight(): Int = height - coveredTop - coveredBottom
+
+    fun scrollRange(): Int = computeVerticalScrollRange()
 
     /** Где на высоте колонки стоит это смещение. */
     private fun yOf(offset: Int): Int? {
@@ -411,7 +416,7 @@ class ArticleView(context: Context, private val host: ArticleHost) : ScrollView(
     fun scrollToOffset(offset: Int, align: Float) {
         ensure(offset)
         val y = yOf(offset) ?: return
-        jump { scrollTo(0, max(0, y + paddingTop - covered - (visibleHeight() * align).toInt())) }
+        jump { scrollTo(0, max(0, y + paddingTop - coveredTop - (visibleHeight() * align).toInt())) }
     }
 
     /** Прокрутить не пальцем — прыжком: шапку (#45) это не двигает. */
@@ -498,7 +503,7 @@ class ArticleView(context: Context, private val host: ArticleHost) : ScrollView(
             val box = Rect()
             cell.getDrawingRect(box)
             frame.offsetDescendantRectToMyCoords(cell, box)
-            jump { scrollTo(0, max(0, frame.top + box.top + paddingTop - covered - (visibleHeight() * align).toInt())) }
+            jump { scrollTo(0, max(0, frame.top + box.top + paddingTop - coveredTop - (visibleHeight() * align).toInt())) }
             if (box.left < frame.scrollX || box.right > frame.scrollX + frame.width) {
                 frame.scrollTo(max(0, box.left - metrics.px(16f).toInt()), 0)
             }

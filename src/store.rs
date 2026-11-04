@@ -652,6 +652,8 @@ pub struct Settings {
     /// и строку не пишет. По умолчанию уезжает (мейнтейнер, 25 октября 2026);
     /// в файл — только `bar stays`.
     pub slide_bar: bool,
+    /// Где стоит панель телефона: умолчание наверху, окно это не умеет.
+    pub bar_bottom: bool,
     /// Набор читателя (#4). В файл пишется только то, что отличается
     /// от умолчания, — по той же причине, что у `shelf_width`: иначе наше
     /// нынешнее умолчание застыло бы в файле как выбор читателя.
@@ -674,6 +676,7 @@ impl Default for Settings {
             archive: true,
             plain_archive: false,
             slide_bar: true,
+            bar_bottom: false,
             typography: Type::default(),
         }
     }
@@ -720,6 +723,7 @@ impl Settings {
                 "archive" => settings.archive = value == "on",
                 "archive-files" => settings.plain_archive = value == "plain",
                 "bar" => settings.slide_bar = value != "stays",
+                "bar-position" => settings.bar_bottom = value == "bottom",
                 "face" => {
                     if let Some(face) = Face::from_name(value) {
                         settings.typography.face = face;
@@ -777,6 +781,9 @@ impl Settings {
         }
         if !self.slide_bar {
             text.push_str("bar\tstays\n");
+        }
+        if self.bar_bottom {
+            text.push_str("bar-position\tbottom\n");
         }
         let (chosen, usual) = (self.typography, Type::default());
         if chosen.face != usual.face {
@@ -1790,6 +1797,7 @@ mod tests {
             archive: false,
             plain_archive: true,
             slide_bar: false,
+            bar_bottom: true,
             typography: Type {
                 face: Face::Serif,
                 size: 18.0,
@@ -1815,6 +1823,7 @@ mod tests {
         // не по умолчанию.
         assert!(!text.contains("bar"), "{text}");
         assert!(!text.contains("archive-files"), "{text}");
+        assert!(!text.contains("bar-position"), "{text}");
         fs::write(
             &path,
             "notes\thidden\nsize 17\nmeasure 900\nface comic\nleading 1.4\n",
@@ -1870,6 +1879,19 @@ mod tests {
         assert_eq!(settings.shelf_width, None);
         // Нет файла вовсе — тоже умолчания, а не отказ.
         assert_eq!(Settings::at("/nowhere/at/all.tsv"), Settings::default());
+    }
+
+    #[test]
+    fn toolbar_position_defaults_to_top_and_ignores_unknown_values() {
+        let dir = temporary("bar-position");
+        let path = dir.join("settings.tsv");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "theme dark\n").unwrap();
+        assert!(!Settings::at(&path).bar_bottom);
+        fs::write(&path, "bar-position sideways\n").unwrap();
+        assert!(!Settings::at(&path).bar_bottom);
+        fs::write(&path, "bar-position bottom\n").unwrap();
+        assert!(Settings::at(&path).bar_bottom);
     }
 
     #[test]

@@ -64,7 +64,8 @@ class MainActivity : Activity(), ArticleHost {
     private var systemHigh = false
     /** Уезжает ли шапка, пока читают (#45): настройка, по умолчанию — да. */
     private var slideBar = true
-    /** Насколько шапка уехала вверх: 0 — на месте, её рост — вся. */
+    private var barBottom = false
+    /** Distance the toolbar has moved outward from its selected screen edge. */
     private var hidden = 0f
     private var barMotion: android.animation.ValueAnimator? = null
     /** Куда шапка едет сейчас (`moveBar`). */
@@ -143,6 +144,7 @@ class MainActivity : Activity(), ArticleHost {
         }
         systemHigh = systemContrast()
         slideBar = stored.optBoolean("slideBar", true)
+        barBottom = stored.text("barPosition") == "bottom"
         assisted = assistance()
         images = stored.optBoolean("images", true)
         archive = stored.optBoolean("archive", true)
@@ -287,9 +289,8 @@ class MainActivity : Activity(), ArticleHost {
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(column, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
 
-        // Шапка — поверх статьи, а не над ней (#45): уезжая, она не отдаёт
-        // статье места, и строки под глазами не сдвигаются. Статья оставляет
-        // под неё поле сверху (`ArticleView.reserve`).
+        // The toolbar overlays the article instead of taking layout space;
+        // ArticleView reserves the selected edge while it moves.
         bar = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(4f), dp(4f), dp(4f), dp(4f))
@@ -312,6 +313,7 @@ class MainActivity : Activity(), ArticleHost {
         }
         column.addView(findBar, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         root.addView(bar, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP))
+        applyBarPosition()
 
         notice = TextView(this).apply {
             visibility = View.GONE
@@ -337,7 +339,8 @@ class MainActivity : Activity(), ArticleHost {
             changed = { dark, images -> changeSettings(dark, images) },
             contrasted = { on -> changeContrast(on) },
             slid = { on -> changeSlideBar(on) },
-            keepCopies = { on -> archive = on; Core.saveSettings(dark, images, archive, contrast, slideBar) },
+            positioned = { bottom -> changeBarPosition(bottom) },
+            keepCopies = { on -> archive = on; saveSettings() },
             sharedCacheChanged = { on -> sharedMarkdownFolder.enable(on); Core.setSharedCacheEnabled(on); showSettings() },
             chooseSharedFolder = { chooseSharedFolder() },
             forget = { forgetEverything() },
@@ -456,6 +459,25 @@ class MainActivity : Activity(), ArticleHost {
             view.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop, insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
         }
         return insets
+    }
+
+    /** Keep the article column and toolbar aligned to the selected outer edges. */
+    private fun applyBarPosition() {
+        val column = stage.parent as? LinearLayout ?: return
+        val barParams = bar.layoutParams as? FrameLayout.LayoutParams ?: return
+        barParams.gravity = if (barBottom) Gravity.BOTTOM else Gravity.TOP
+        bar.layoutParams = barParams
+        column.removeAllViews()
+        if (barBottom) {
+            column.addView(strip)
+            column.addView(stage)
+        } else {
+            column.addView(stage)
+            column.addView(strip)
+        }
+        column.addView(findBar)
+        currentTab()?.view?.reserve(bar.height, barBottom)
+        placeBar(hidden)
     }
 
     /** Панель: назад, адрес, полка, вкладки, меню. Значки перекрашиваются с темой. */
@@ -629,7 +651,7 @@ class MainActivity : Activity(), ArticleHost {
             stage.addView(view, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
             if (reading) view.requestFocus()
         }
-        view.reserve(bar.height)
+        view.reserve(bar.height, barBottom)
         showBar()
         if (tab.pending) wakeTab(tab) else if (fresh) render(tab)
         closeFind()
@@ -1345,11 +1367,18 @@ class MainActivity : Activity(), ArticleHost {
         }
         // Во всю ширину панели, а не поля: в поле шириной в полэкрана рядом
         // с тремя кнопками от заголовка и адреса оставалось по слову.
-        card = PopupWindow(column, bar.width - 2 * dropMargin, LinearLayout.LayoutParams.WRAP_CONTENT, false).apply {
+        val cardWidth = bar.width - 2 * dropMargin
+        column.measure(
+            View.MeasureSpec.makeMeasureSpec(cardWidth, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(root.height, View.MeasureSpec.AT_MOST),
+        )
+        val cardHeight = column.measuredHeight
+        card = PopupWindow(column, cardWidth, cardHeight, false).apply {
             // Не фокусируемая: набор идёт в строку, а не в карточку.
             inputMethodMode = PopupWindow.INPUT_METHOD_NEEDED
             elevation = dp(4f).toFloat()
-            showAsDropDown(bar, dropMargin, 0)
+            val verticalOffset = if (barBottom) -height - bar.height else 0
+            showAsDropDown(bar, dropMargin, verticalOffset)
         }
     }
 
@@ -1480,7 +1509,7 @@ class MainActivity : Activity(), ArticleHost {
         val view = tab.view ?: return null
         // Страница в экран — пути нет.
         val content = view.getChildAt(0)?.height ?: 0
-        if (content + view.paddingTop <= view.height) return null
+        if (content + view.paddingTop + view.paddingBottom <= view.height) return null
         val total = shown.page.text.length
         val reached = view.offsetAt(view.visibleBottom()) ?: total
         return Triple(reached, total, shown.page.contents.map { it.at })
@@ -1537,6 +1566,7 @@ class MainActivity : Activity(), ArticleHost {
         // Высота — по строкам, а не до клавиатуры: пустой хвост списка
         // закрывал страницу и ничего не предлагал.
         hints.height = hintRows.size * dp(if (hintRows.any { it.second.isNotEmpty() }) 60f else 40f) + dp(8f)
+        hints.verticalOffset = if (barBottom) -hints.height - bar.height else 0
         if (!hints.isShowing) hints.show() else hints.show()
     }
 
@@ -1597,12 +1627,12 @@ class MainActivity : Activity(), ArticleHost {
         // Архива списком нет: он — история и закладки с текстом (13 октября 2026).
         menu.item("Search what you've read") { searchArchive() }
         menu.item("Settings") { showSettings() }
-        menu.show(more)
+        menu.show(more, above = barBottom)
     }
 
     private fun showSettings() {
         showBar()
-        settings.show(palette, theme, images, archive, sharedMarkdownFolder.enabled, sharedMarkdownFolder.selected, isBrowser(), reader, slideBar)
+        settings.show(palette, theme, images, archive, sharedMarkdownFolder.enabled, sharedMarkdownFolder.selected, isBrowser(), reader, slideBar, barBottom)
     }
 
     /** The system grants access only to the folder the reader picks. */
@@ -1623,9 +1653,19 @@ class MainActivity : Activity(), ArticleHost {
     /** Шапке — уезжать или стоять (#45). */
     private fun changeSlideBar(on: Boolean) {
         slideBar = on
-        Core.saveSettings(dark, images, archive, contrast, slideBar)
+        saveSettings()
         if (!on) showBar()
     }
+
+    private fun changeBarPosition(bottom: Boolean) {
+        if (barBottom == bottom) return
+        barBottom = bottom
+        saveSettings()
+        applyBarPosition()
+        showSettings()
+    }
+
+    private fun saveSettings() = Core.saveSettings(dark, images, archive, contrast, slideBar, if (barBottom) "bottom" else "top")
 
     /** Новый набор: на диск, открытой вкладке — сразу; фоновые набираются при показе. */
     private fun changeType(chosen: ReaderType) {
@@ -1689,7 +1729,7 @@ class MainActivity : Activity(), ArticleHost {
         val imagesOn = images && !this.images
         this.dark = dark
         this.images = images
-        Core.saveSettings(dark, images, archive, contrast, slideBar)
+        saveSettings()
         if (themeChanged) retheme()
         if (imagesOn) currentTab()?.view?.loadAll()
     }
@@ -1698,7 +1738,7 @@ class MainActivity : Activity(), ArticleHost {
     private fun changeContrast(high: Boolean) {
         val was = theme
         contrast = high
-        Core.saveSettings(dark, images, archive, contrast, slideBar)
+        saveSettings()
         if (theme != was) retheme()
     }
 
@@ -1807,10 +1847,19 @@ class MainActivity : Activity(), ArticleHost {
      */
     private fun placeBar(to: Float) {
         val view = currentTab()?.view
-        val most = minOf(bar.height.toFloat(), (view?.scrollY ?: 0).toFloat())
+        val scrollY = (view?.scrollY ?: 0).toFloat()
+        val scrollRange = view?.let { maxOf(0, it.scrollRange() - it.height).toFloat() } ?: 0f
+        val readableScroll = if (barBottom) scrollRange - scrollY else scrollY
+        val most = minOf(bar.height.toFloat(), readableScroll.coerceAtLeast(0f))
         hidden = to.coerceIn(0f, maxOf(0f, most))
-        bar.translationY = -hidden
-        view?.covered = bar.height - hidden.toInt()
+        bar.translationY = if (barBottom) hidden else -hidden
+        if (barBottom) {
+            view?.coveredTop = 0
+            view?.coveredBottom = bar.height - hidden.toInt()
+        } else {
+            view?.coveredTop = bar.height - hidden.toInt()
+            view?.coveredBottom = 0
+        }
     }
 
     /** Довести шапку до места коротким движением — после отпускания пальца. */
@@ -1835,7 +1884,7 @@ class MainActivity : Activity(), ArticleHost {
 
     /** Шапка сменила рост (поворот, кегль системы): статья оставляет под неё поле заново. */
     private fun fitUnderBar() {
-        currentTab()?.view?.reserve(bar.height)
+        currentTab()?.view?.reserve(bar.height, barBottom)
         placeBar(hidden)
     }
 
