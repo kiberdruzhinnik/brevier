@@ -198,7 +198,7 @@ private fun shape(styles: List<String>, m: Metrics): Shape {
  * текста (`Washed`), под буквами. `rule` — черта под буквами того же участка:
  * так видно отмеченное, к которому приписаны слова (#39). Ноль — без черты.
  */
-class Wash(val color: Int, val rule: Int = 0)
+class Wash(val color: Int)
 
 /** Гарнитура, кегль, наклон, разрядка, подъём — одним спаном на участок. */
 class FaceSpan(

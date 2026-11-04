@@ -1,10 +1,9 @@
 //! Тракт окна и телефона на странице с диска — для замороженного набора
 //! (`corpus/frozen.py`). cli модели страницы не строит: раскладка, переносы,
-//! вехи, поиск и заметки живут только в интерфейсах, и прогон корпуса их
+//! вехи и поиск живут только в интерфейсах, и прогон корпуса их
 //! не видит. Здесь — то же, что окно и телефон делают с открытой страницей,
 //! кроме сети и рисования, плюс проверка того, что модель сходится сама
-//! с собой: смещения в тексте, объекты на своих знаках, заметка находит
-//! то место, где её оставили.
+//! с собой: смещения в тексте и объекты на своих знаках.
 //!
 //!     cargo build --release --example lay --features typeset,images
 //!     target/release/examples/lay <url> <out.md> <out.json> < page.html
@@ -19,7 +18,7 @@ use std::process::ExitCode;
 use brevier::page::{self, Block, Page, json_string};
 use brevier::reading::{self, Progress};
 use brevier::store::Stamp;
-use brevier::{Document, Kind, notes};
+use brevier::{Document, Kind};
 
 /// Экран для вех внутри раздела — в знаках, как у телефона средней меры.
 const SCREEN: usize = 1500;
@@ -30,9 +29,6 @@ const NEEDLES: usize = 40;
 /// Слова, на которых поиск без учёта регистра обычно и ломается: строчная
 /// форма длиннее заглавной или наоборот.
 const AWKWARD: [&str; 5] = ["İ", "ß", "ǅ", "ﬃ", "Σ"];
-/// Длина выделения под заметку — как у пальца: полстроки.
-const NOTE_SPAN: usize = 40;
-
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let [url, md_out, json_out] = args.as_slice() else {
@@ -59,7 +55,6 @@ fn main() -> ExitCode {
     let waypoints = waypoints(&page);
     exercise_reading(url, &page);
     check_find(&page, &mut broken);
-    check_notes(&page, &mut broken);
 
     let json = model_json(&document, &page, &waypoints);
     if let Err(error) =
@@ -150,39 +145,6 @@ fn check_find(page: &Page, broken: &mut Vec<String>) {
             }
         }
         let _ = page::utf16_offsets(text, &page::hits(text, "the"));
-    }
-}
-
-/// Заметка, оставленная на месте начала абзаца, находит это же место.
-fn check_notes(page: &Page, broken: &mut Vec<String>) {
-    let mut made = Vec::new();
-    for (index, lead) in page.leads.iter().enumerate().step_by(7) {
-        let Ok(selection) = notes::select(&page.text, lead.offset, lead.offset + NOTE_SPAN) else {
-            continue;
-        };
-        made.push(notes::Note {
-            id: index as u64,
-            stamp: Stamp {
-                days: 0,
-                seconds: 0,
-                offset: 0,
-            },
-            address: String::new(),
-            title: String::new(),
-            at: selection.at,
-            before: selection.before,
-            quote: selection.quote,
-            after: selection.after,
-            text: String::new(),
-            pictures: Vec::new(),
-        });
-    }
-    let refs: Vec<&notes::Note> = made.iter().collect();
-    for (note, spot) in made.iter().zip(notes::place(&page.text, &refs)) {
-        match spot.place {
-            Some((from, _)) if from == note.at => {}
-            other => broken.push(format!("note at {} placed at {other:?}", note.at)),
-        }
     }
 }
 

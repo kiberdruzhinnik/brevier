@@ -64,8 +64,6 @@ class MainActivity : Activity(), ArticleHost {
     private var systemHigh = false
     /** Уезжает ли шапка, пока читают (#45): настройка, по умолчанию — да. */
     private var slideBar = true
-    /** Карточки заметок под абзацами (#42): настройка, по умолчанию — да. */
-    private var notesShown = true
     /** Насколько шапка уехала вверх: 0 — на месте, её рост — вся. */
     private var hidden = 0f
     private var barMotion: android.animation.ValueAnimator? = null
@@ -145,7 +143,6 @@ class MainActivity : Activity(), ArticleHost {
         }
         systemHigh = systemContrast()
         slideBar = stored.optBoolean("slideBar", true)
-        notesShown = stored.optBoolean("notes", true)
         assisted = assistance()
         images = stored.optBoolean("images", true)
         archive = stored.optBoolean("archive", true)
@@ -306,7 +303,6 @@ class MainActivity : Activity(), ArticleHost {
 
         strip = ProgressStrip(this)
         strip.source = { stripSource() }
-        strip.notes = { currentTab()?.notes?.filter { it.placed }?.map { it.from } ?: emptyList() }
         column.addView(strip, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(7f)))
 
         findBar = LinearLayout(this).apply {
@@ -341,8 +337,7 @@ class MainActivity : Activity(), ArticleHost {
             changed = { dark, images -> changeSettings(dark, images) },
             contrasted = { on -> changeContrast(on) },
             slid = { on -> changeSlideBar(on) },
-            notesUnder = { on -> changeNotesShown(on) },
-            keepCopies = { on -> archive = on; Core.saveSettings(dark, images, archive, contrast, slideBar, notesShown) },
+            keepCopies = { on -> archive = on; Core.saveSettings(dark, images, archive, contrast, slideBar) },
             sharedCacheChanged = { on -> sharedMarkdownFolder.enable(on); Core.setSharedCacheEnabled(on); showSettings() },
             chooseSharedFolder = { chooseSharedFolder() },
             forget = { forgetEverything() },
@@ -623,7 +618,6 @@ class MainActivity : Activity(), ArticleHost {
         current = index
         val fresh = tab.view == null
         val view = tab.view ?: ArticleView(this, this).also { tab.view = it }
-        view.cards = notesShown
         if (view.parent !== stage) {
             // Фокус был у прежней статьи — переходит к новой. Иначе Android
             // отдаёт его первому, кто может взять, — полю адреса, и `setAddress`
@@ -787,7 +781,6 @@ class MainActivity : Activity(), ArticleHost {
             draw(tab, view)
         } catch (failure: RuntimeException) {
             Log.w("Brevier", "drawing ${tab.current()} failed", failure)
-            tab.notes = emptyList()
             view.show(message(TRIPPED), metrics(), theme, eager = false)
         }
     }
@@ -799,8 +792,7 @@ class MainActivity : Activity(), ArticleHost {
                 // Заметки (#39) — у ядра, на каждый показ: их могли оставить
                 // в другой вкладке на той же странице. До показа: по ним
                 // режется колонка под карточки (#42).
-                tab.notes = if (readable(tab) != null) Core.notes(shown.address) else emptyList()
-                view.show(shown.page, metrics(), theme, eager = images && shown.ok, offer = shown.offer, ways = shown.ways, notes = tab.notes)
+                view.show(shown.page, metrics(), theme, eager = images && shown.ok, offer = shown.offer, ways = shown.ways)
                 val resume = tab.resume
                 tab.resume = null
                 val anchor = if (tab.anchorPending) shown.anchor?.let { shown.page.anchor(it) } else null
@@ -970,10 +962,9 @@ class MainActivity : Activity(), ArticleHost {
     }
 
     /**
-     * Полка: проект, заметки, оглавление, ленты, сайт. Группы проекта, лент
+     * Полка: проект, оглавление, ленты, сайт. Группы проекта, лент
      * и сайта подписаны всегда — их строки уводят со страницы; оглавление
-     * подписывается, когда над ним есть другая группа. Заметки (#39) — выше
-     * оглавления: оно бывает длинным, и под ним они терялись бы. Ленты выше
+     * подписывается, когда над ним есть другая группа. Ленты выше
      * меню: меню бывает в полсотни строк.
      */
     private fun fillShelf(tab: Tab, shown: Loaded?) {
@@ -984,12 +975,7 @@ class MainActivity : Activity(), ArticleHost {
             rows += ShelfRow.Header("In this repository")
             project.forEach { rows += ShelfRow.Open(it.title, it.address, dim = false) }
         }
-        val notes = if (shown != null) tab.notes else emptyList()
-        if (notes.isNotEmpty()) {
-            rows += ShelfRow.Header("Your notes")
-            notes.forEach { rows += ShelfRow.Note(it) }
-        }
-        if ((project.isNotEmpty() || notes.isNotEmpty()) && marks.isNotEmpty()) rows += ShelfRow.Header("On this page")
+        if (project.isNotEmpty() && marks.isNotEmpty()) rows += ShelfRow.Header("On this page")
         // Веха несёт своё место в подписи (#19): «40% · Начало абзаца…».
         val length = shown?.page?.text?.length ?: 0
         marks.forEach {
@@ -1026,10 +1012,6 @@ class MainActivity : Activity(), ArticleHost {
         when (row) {
             is ShelfRow.Jump -> currentTab()?.view?.settle(row.at, ANCHOR_ALIGN)
             is ShelfRow.Open -> currentTab()?.let { open(it, row.address, remember = true) }
-            // Цитаты на странице больше нет — прыгать некуда; меню скажет это
-            // и даст убрать заметку.
-            is ShelfRow.Note -> if (row.note.placed) currentTab()?.view?.settle(row.note.from, ANCHOR_ALIGN)
-                else noteMenu(row.note.id, touched.first, touched.second)
             is ShelfRow.Header -> {}
         }
     }
@@ -1082,231 +1064,6 @@ class MainActivity : Activity(), ArticleHost {
         }
         menu.item("Open in your browser") { openOutside(target) }
         menu.showAt(root, x, y)
-    }
-
-    // ── заметки (#39) ───────────────────────────────────────────────────────
-
-    override fun mark(from: Int, to: Int, write: Boolean) {
-        val tab = currentTab() ?: return
-        val shown = readable(tab) ?: return notice("Notes are kept for articles")
-        val keep = { text: String ->
-            val result = Core.addNote(shown.address, from, to, text)
-            if (result.optBoolean("ok")) {
-                refreshNotes(tab)
-                notice(if (text.isEmpty()) "Highlighted · it is on the shelf" else "Note kept · it is on the shelf")
-            } else {
-                notice(result.optString("headline", "Not kept"))
-            }
-        }
-        if (write) askNoteText("", "Note", keep) else keep("")
-    }
-
-    override fun noteMenu(id: Long, x: Int, y: Int) {
-        val tab = currentTab() ?: return
-        val note = tab.notes.firstOrNull { it.id == id } ?: return
-        val menu = Menu(this, fonts, palette)
-        val gone = if (note.placed) "" else "No longer on the page: "
-        menu.caption(gone + note.text.ifEmpty { "“${note.quote}”" })
-        menu.item(if (note.text.isEmpty()) "Add a note" else "Edit the note") {
-            askNoteText(note.text, if (note.text.isEmpty()) "Note" else "Edit the note") { text ->
-                Core.editNote(id, text)
-                refreshNotes(tab)
-            }
-        }
-        menu.item("Add a picture") { pickNotePicture(id) }
-        menu.item("Remove") {
-            Core.removeNote(id)
-            refreshNotes(tab)
-            notice("Note removed")
-        }
-        menu.showAt(root, x, y)
-    }
-
-    /**
-     * Картинку — к заметке (#42): системный выбор фото, без разрешений
-     * (Android 13+ — Photo Picker, раньше — выбор файла). Выбранная едет
-     * в кэш приложения, оттуда её берёт ядро и кладёт к заметкам.
-     */
-    private fun pickNotePicture(id: Long) {
-        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            Intent(android.provider.MediaStore.ACTION_PICK_IMAGES).setType("image/*")
-        } else {
-            Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE)
-        }
-        pendingNotePicture = id
-        try {
-            @Suppress("DEPRECATION")
-            startActivityForResult(intent, NOTE_PICTURE)
-        } catch (failure: ActivityNotFoundException) {
-            pendingNotePicture = null
-            notice("No app offers pictures")
-        }
-    }
-
-    private var pendingNotePicture: Long? = null
-
-    /** Выбранную картинку — в заметку: копия в кэш, остальное — ядро. */
-    private fun attachNotePicture(id: Long, uri: Uri) {
-        val tab = currentTab() ?: return
-        notice("Adding the picture…")
-        App.work.execute {
-            val target = File(File(cacheDir, "picked").apply { mkdirs() }, "picture-${System.currentTimeMillis()}")
-            val copied = runCatching {
-                contentResolver.openInputStream(uri)?.use { input ->
-                    target.outputStream().use { output ->
-                        val buffer = ByteArray(64 * 1024)
-                        var total = 0L
-                        while (true) {
-                            val read = input.read(buffer)
-                            if (read < 0) break
-                            total += read
-                            if (total > MAX_PICTURE) error("too big")
-                            output.write(buffer, 0, read)
-                        }
-                    }
-                    true
-                } ?: false
-            }.getOrDefault(false)
-            val result = if (copied) Core.attachPicture(id, target.path) else null
-            target.delete()
-            main.post {
-                when {
-                    result == null -> notice("The picture could not be read")
-                    result.optBoolean("ok") -> {
-                        refreshNotes(tab)
-                        notice("Picture added to the note")
-                    }
-                    else -> notice(result.optString("headline", "The picture could not be kept"))
-                }
-            }
-        }
-    }
-
-    /**
-     * Картинка заметки крупно (#42) — во весь экран, поверх статьи. Убрать
-     * её из заметки — здесь же: картинку убирают, глядя на неё.
-     */
-    override fun notePicture(id: Long, path: String) {
-        val tab = currentTab() ?: return
-        val image = ImageView(this).apply {
-            adjustViewBounds = true
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            contentDescription = "Your picture"
-        }
-        val dialog = AlertDialog.Builder(this)
-            .setView(image)
-            .setNegativeButton("Remove") { _, _ ->
-                Core.detachPicture(id, path)
-                refreshNotes(tab)
-                notice("Picture removed")
-            }
-            .setPositiveButton("Close", null)
-            .create()
-        dialog.show()
-        val width = resources.displayMetrics.widthPixels
-        val paper = theme.copy(dark = false).let { type.palette(it).paper } and 0xffffff
-        App.work.execute {
-            val bytes = try {
-                Core.image(path, width, paper, metrics().text, false)
-            } catch (failure: Throwable) {
-                null
-            }
-            val bitmap = bytes?.takeIf { it.isNotEmpty() && it[0].toInt() == 0 }?.let {
-                val buffer = java.nio.ByteBuffer.wrap(it)
-                buffer.get()
-                val w = buffer.int
-                val h = buffer.int
-                runCatching {
-                    android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888).apply {
-                        copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(it, 9, w * h * 4))
-                    }
-                }.getOrNull()
-            }
-            main.post { if (bitmap != null) image.setImageBitmap(bitmap) }
-        }
-    }
-
-    /**
-     * Заметки — наружу (#42): конспект в markdown, с картинками — `.zip`,
-     * в «Поделиться»: Obsidian, почта, мессенджер, «Файлы». `all` — все
-     * заметки, иначе — открытой страницы.
-     */
-    private fun shareNotes(all: Boolean) {
-        val address = if (all) "" else currentTab()?.let { readable(it) }?.address ?: run {
-            notice("No notes on this page")
-            return
-        }
-        val dir = File(cacheDir, Shared.DIR).apply { mkdirs() }
-        Shared.sweep(dir)
-        App.work.execute {
-            val result = Core.exportNotes(address, dir.path)
-            main.post {
-                if (!result.optBoolean("ok")) {
-                    notice(result.optString("headline", "No notes yet"))
-                    return@post
-                }
-                val file = File(result.getString("path"))
-                val uri = Shared.uri(this, file)
-                val send = Intent(Intent.ACTION_SEND).apply {
-                    type = if (file.name.endsWith(".zip")) "application/zip" else "text/markdown"
-                    putExtra(Intent.EXTRA_STREAM, uri)
-                    putExtra(Intent.EXTRA_TITLE, file.name)
-                    clipData = ClipData.newRawUri(null, uri)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                try {
-                    startActivity(Intent.createChooser(send, null))
-                } catch (failure: ActivityNotFoundException) {
-                    notice("No app takes files")
-                }
-            }
-        }
-    }
-
-    /** Карточки заметок под абзацами (#42) — включить или выключить. */
-    private fun changeNotesShown(on: Boolean) {
-        notesShown = on
-        Core.saveSettings(dark, images, archive, contrast, slideBar, notesShown)
-        for (tab in tabs) tab.view?.showCards(on)
-    }
-
-    /** Заметки заново — после правки: подсветка, полка, полоса. */
-    private fun refreshNotes(tab: Tab) {
-        val shown = readable(tab)
-        tab.notes = if (shown != null) Core.notes(shown.address) else emptyList()
-        tab.view?.notes(tab.notes)
-        if (tab == currentTab()) {
-            fillShelf(tab, tab.shown)
-            contents.isEnabled = !shelf.empty
-            contents.alpha = if (shelf.empty) 0.35f else 1f
-            strip.invalidate()
-        }
-    }
-
-    /** Спросить слова к заметке. Пустые — тоже ответ: заметка станет отметкой. */
-    private fun askNoteText(initial: String, title: String, done: (String) -> Unit) {
-        showBar()
-        val field = EditText(this).apply {
-            setText(initial)
-            setSelection(initial.length)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-            minLines = 2
-            maxLines = 8
-            hint = "A few words next to the passage"
-        }
-        val frame = FrameLayout(this).apply {
-            setPadding(dp(20f), dp(8f), dp(20f), 0)
-            addView(field)
-        }
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(title)
-            .setView(frame)
-            .setNegativeButton("Cancel", null)
-            .setPositiveButton("Keep") { _, _ -> done(field.text.toString()) }
-            .create()
-        dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
-        dialog.show()
-        field.requestFocus()
     }
 
     /**
@@ -1837,10 +1594,6 @@ class MainActivity : Activity(), ArticleHost {
         }
         menu.item("History") { newTab("brevier:history") }
         menu.item("Bookmarks") { newTab("brevier:bookmarks") }
-        menu.item("Your notes") { newTab("brevier:notes") }
-        // Заметки — наружу (#42): эти и все.
-        menu.item("Share this page's notes") { shareNotes(all = false) }
-        menu.item("Share all notes") { shareNotes(all = true) }
         // Архива списком нет: он — история и закладки с текстом (13 октября 2026).
         menu.item("Search what you've read") { searchArchive() }
         menu.item("Settings") { showSettings() }
@@ -1849,7 +1602,7 @@ class MainActivity : Activity(), ArticleHost {
 
     private fun showSettings() {
         showBar()
-        settings.show(palette, theme, images, archive, sharedMarkdownFolder.enabled, sharedMarkdownFolder.selected, isBrowser(), reader, slideBar, notesShown)
+        settings.show(palette, theme, images, archive, sharedMarkdownFolder.enabled, sharedMarkdownFolder.selected, isBrowser(), reader, slideBar)
     }
 
     /** The system grants access only to the folder the reader picks. */
@@ -1870,7 +1623,7 @@ class MainActivity : Activity(), ArticleHost {
     /** Шапке — уезжать или стоять (#45). */
     private fun changeSlideBar(on: Boolean) {
         slideBar = on
-        Core.saveSettings(dark, images, archive, contrast, slideBar, notesShown)
+        Core.saveSettings(dark, images, archive, contrast, slideBar)
         if (!on) showBar()
     }
 
@@ -1936,7 +1689,7 @@ class MainActivity : Activity(), ArticleHost {
         val imagesOn = images && !this.images
         this.dark = dark
         this.images = images
-        Core.saveSettings(dark, images, archive, contrast, slideBar, notesShown)
+        Core.saveSettings(dark, images, archive, contrast, slideBar)
         if (themeChanged) retheme()
         if (imagesOn) currentTab()?.view?.loadAll()
     }
@@ -1945,7 +1698,7 @@ class MainActivity : Activity(), ArticleHost {
     private fun changeContrast(high: Boolean) {
         val was = theme
         contrast = high
-        Core.saveSettings(dark, images, archive, contrast, slideBar, notesShown)
+        Core.saveSettings(dark, images, archive, contrast, slideBar)
         if (theme != was) retheme()
     }
 
@@ -1970,7 +1723,7 @@ class MainActivity : Activity(), ArticleHost {
     private fun forgetEverything() {
         AlertDialog.Builder(this)
             .setTitle("Forget everything you have read?")
-            .setMessage("The list of pages goes away, the address bar stops suggesting them, and the copies of what you read are deleted. Bookmarks and notes, with their copies, and open tabs stay.")
+            .setMessage("The list of pages goes away, the address bar stops suggesting them, and the copies of what you read are deleted. Bookmarks, with their copies, and open tabs stay.")
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Forget") { _, _ ->
                 Core.forget()
@@ -2204,13 +1957,6 @@ class MainActivity : Activity(), ArticleHost {
             if (isBrowser()) notice("Links from other apps now open in Brevier")
             return
         }
-        if (requestCode == NOTE_PICTURE) {
-            val id = pendingNotePicture ?: return
-            pendingNotePicture = null
-            val uri = data?.data
-            if (resultCode == RESULT_OK && uri != null) attachNotePicture(id, uri)
-            return
-        }
         if (requestCode == SHARED_FOLDER) {
             val uri = data?.data
             if (resultCode == RESULT_OK && uri != null) {
@@ -2410,11 +2156,8 @@ class MainActivity : Activity(), ArticleHost {
         private const val SAVE = 1
         private const val ROLE = 2
         private const val PICTURE = 3
-        private const val NOTE_PICTURE = 4
         private const val SHARED_FOLDER = 5
 
-        /** Самая большая картинка, которую берём в заметку из галереи. */
-        const val MAX_PICTURE = 64L * 1024 * 1024
         private val NOTICE = Any()
         /** Докуда растёт «Loading…», прежде чем начать сначала. */
         private const val LOADING_DOTS = 10

@@ -652,10 +652,6 @@ pub struct Settings {
     /// и строку не пишет. По умолчанию уезжает (мейнтейнер, 25 октября 2026);
     /// в файл — только `bar stays`.
     pub slide_bar: bool,
-    /// Показывать ли заметки рядом с текстом (#42): на поле справа, а где
-    /// места нет — под абзацем. Выключено — только подложка в тексте.
-    /// По умолчанию показываем; в файл — только `notes hidden`.
-    pub notes: bool,
     /// Набор читателя (#4). В файл пишется только то, что отличается
     /// от умолчания, — по той же причине, что у `shelf_width`: иначе наше
     /// нынешнее умолчание застыло бы в файле как выбор читателя.
@@ -678,7 +674,6 @@ impl Default for Settings {
             archive: true,
             plain_archive: false,
             slide_bar: true,
-            notes: true,
             typography: Type::default(),
         }
     }
@@ -725,7 +720,6 @@ impl Settings {
                 "archive" => settings.archive = value == "on",
                 "archive-files" => settings.plain_archive = value == "plain",
                 "bar" => settings.slide_bar = value != "stays",
-                "notes" => settings.notes = value != "hidden",
                 "face" => {
                     if let Some(face) = Face::from_name(value) {
                         settings.typography.face = face;
@@ -783,9 +777,6 @@ impl Settings {
         }
         if !self.slide_bar {
             text.push_str("bar\tstays\n");
-        }
-        if !self.notes {
-            text.push_str("notes\thidden\n");
         }
         let (chosen, usual) = (self.typography, Type::default());
         if chosen.face != usual.face {
@@ -946,6 +937,29 @@ pub fn data_dir() -> Option<PathBuf> {
         return Some(own);
     }
     place("XDG_DATA_HOME", ".local/share", "Application Support")
+}
+
+/// Удалить пользовательские заметки старых версий, оставив остальное
+/// хранилище приложения нетронутым.
+pub fn remove_legacy_notes() -> std::io::Result<()> {
+    let Some(dir) = data_dir() else {
+        return Ok(());
+    };
+    remove_legacy_notes_at(&dir)
+}
+
+fn remove_legacy_notes_at(dir: &Path) -> std::io::Result<()> {
+    match fs::remove_file(dir.join("notes.tsv")) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    match fs::remove_dir_all(dir.join("notes")) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    Ok(())
 }
 
 /// Где лежат настройки. Пока ими никто не пользуется — раскладку решаем
@@ -1273,6 +1287,28 @@ mod tests {
 
     fn temporary(name: &str) -> Scratch {
         Scratch::new(&format!("store-{name}"))
+    }
+
+    #[test]
+    fn removing_legacy_notes_preserves_other_app_data() {
+        let dir = temporary("remove-legacy-notes");
+        fs::create_dir_all(dir.join("notes")).unwrap();
+        fs::create_dir_all(dir.join("archive")).unwrap();
+        fs::write(dir.join("notes.tsv"), "legacy note\n").unwrap();
+        fs::write(dir.join("notes/picture.png"), b"picture").unwrap();
+        fs::write(dir.join("archive/article.md"), b"article").unwrap();
+        fs::write(dir.join("bookmarks.tsv"), b"bookmark").unwrap();
+
+        remove_legacy_notes_at(&dir).unwrap();
+
+        assert!(!dir.join("notes.tsv").exists());
+        assert!(!dir.join("notes").exists());
+        assert_eq!(
+            fs::read(dir.join("archive/article.md")).unwrap(),
+            b"article"
+        );
+        assert_eq!(fs::read(dir.join("bookmarks.tsv")).unwrap(), b"bookmark");
+        remove_legacy_notes_at(&dir).unwrap();
     }
 
     fn web(url: &str) -> Address {
@@ -1754,7 +1790,6 @@ mod tests {
             archive: false,
             plain_archive: true,
             slide_bar: false,
-            notes: false,
             typography: Type {
                 face: Face::Serif,
                 size: 18.0,
@@ -1780,9 +1815,11 @@ mod tests {
         // не по умолчанию.
         assert!(!text.contains("bar"), "{text}");
         assert!(!text.contains("archive-files"), "{text}");
-        assert!(!text.contains("notes"), "{text}");
-
-        fs::write(&path, "size 17\nmeasure 900\nface comic\nleading 1.4\n").unwrap();
+        fs::write(
+            &path,
+            "notes\thidden\nsize 17\nmeasure 900\nface comic\nleading 1.4\n",
+        )
+        .unwrap();
         let typography = Settings::at(&path).typography;
         assert_eq!(typography.size, 17.0);
         assert_eq!(typography.measure, Type::default().measure);

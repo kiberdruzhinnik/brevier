@@ -42,9 +42,6 @@ class Tab(val id: Long) {
      */
     val pages = HashMap<String, Loaded>()
 
-    /** Заметки показанной статьи (#39): подсветка, полка и полоса берут их отсюда. */
-    var notes: List<NoteSpot> = emptyList()
-
     /** Номер загрузки: ответ брошенной страницы отличаем по нему. */
     var generation = 0L
     var loading = false

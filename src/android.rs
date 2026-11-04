@@ -43,7 +43,6 @@ use crate::cache::{self, Cache};
 use crate::failure::{describe, describe_page};
 use crate::fetch::UserAgent;
 use crate::media::{self, Fit, Look, Source};
-use crate::notes::{self, Notes};
 use crate::outline;
 use crate::page::{self, Page, json_string};
 use crate::palette;
@@ -78,8 +77,6 @@ struct Core {
     /// Текст отсюда же берут заметки (#39): они бывают там же, где прогресс, —
     /// у статей.
     progress: VecDeque<Reading>,
-    /// Заметки к страницам (#39): `notes.tsv`.
-    notes: Notes,
 }
 
 /// Прогресс одной страницы на телефоне.
@@ -133,7 +130,6 @@ fn core() -> std::sync::MutexGuard<'static, Core> {
             blobs: Blobs::default(),
             readings: Readings::open(),
             progress: VecDeque::new(),
-            notes: Notes::open(),
         })
     });
     // Отравленный мьютекс значит, что какой-то вызов упал посреди правки.
@@ -155,15 +151,17 @@ pub extern "system" fn Java_io_github_gurov_brevier_Core_init<'caller>(
     let outcome = unowned.with_env(|env| -> Result<(), JniError> {
         let home = home.try_to_string(env)?;
         store::set_home(PathBuf::from(home));
+        if let Err(error) = store::remove_legacy_notes() {
+            eprintln!("brevier: cannot remove annotations from an earlier version: {error}");
+        }
         rustls_platform_verifier::android::init_with_env(env, context)?;
         crate::init_crypto();
         // Уборка недельного кэша страниц и архива — раз на запуск и в фоне.
-        // Копия архива живёт, пока на неё указывает журнал, а у закладки
-        // и у страницы с заметками — последняя копия навсегда (#8, #39).
+        // Копия архива живёт, пока на неё указывает журнал или закладка (#8).
         std::thread::spawn(|| {
             Cache::open().prune();
             let kept = Store::open().copies();
-            Archive::open().prune(&kept, &notes::lasting());
+            Archive::open().prune(&kept, &Marks::open().addresses());
         });
         Ok(())
     });
@@ -302,10 +300,6 @@ fn call(method: &str, arg: &str) -> String {
             if !field(4).is_empty() {
                 settings.slide_bar = field(4) == "1";
             }
-            // Заметки под абзацами (#42) — так же.
-            if !field(5).is_empty() {
-                settings.notes = field(5) == "1";
-            }
             settings.save();
             "{}".to_owned()
         }
@@ -358,43 +352,15 @@ fn call(method: &str, arg: &str) -> String {
             }
             core().store.forget();
             // Копии страниц и архив — такой же след прочитанного, как журнал;
-            // кроме копий закладок и страниц с заметками — их обещано навсегда.
-            // Сами заметки читатель написал сам: их «забыть всё» не трогает.
+            // кроме копий закладок — их обещано навсегда.
             Cache::open().forget();
-            Archive::open().forget(&notes::lasting());
+            Archive::open().forget(&Marks::open().addresses());
             "{}".to_owned()
         }
         "docs" => docs(arg),
         "savename" => savename(arg),
         "save" => save(field(0), field(1)),
         "picture.keep" => keep_picture(field(0), field(1)),
-        "notes.of" => notes_of(arg),
-        "notes.add" => add_note(
-            field(0).parse().unwrap_or(0),
-            field(1),
-            field(2).parse().unwrap_or(0),
-            field(3).parse().unwrap_or(0),
-            field(4),
-        ),
-        "notes.edit" => {
-            let done = core().notes.edit(field(0).parse().unwrap_or(0), field(1));
-            format!("{{\"ok\":{done}}}")
-        }
-        "notes.remove" => {
-            let done = core().notes.remove(field(0).parse().unwrap_or(0));
-            format!("{{\"ok\":{done}}}")
-        }
-        "notes.attach" => attach_picture(field(0).parse().unwrap_or(0), field(1)),
-        "notes.detach" => {
-            // Kotlin знает картинку по пути: имя — его хвост.
-            let name = std::path::Path::new(field(1))
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let done = core().notes.detach(field(0).parse().unwrap_or(0), &name);
-            format!("{{\"ok\":{done}}}")
-        }
-        "notes.export" => export_notes(field(0), field(1)),
         other => {
             let mut out = String::from("{\"error\":");
             json_string(&mut out, &format!("unknown call: {other}"));
@@ -425,7 +391,7 @@ fn typography() -> String {
             "{{\"paper\":\"{}\",\"ink\":\"{}\",\"shelf\":\"{}\",\
              \"link\":\"{}\",\"dim\":\"{}\",\"panel\":\"{}\",\"keyword\":\"{}\",\
              \"literal\":\"{}\",\"number\":\"{}\",\"comment\":\"{}\",\"rule\":\"{}\",\
-             \"chosen\":\"{}\",\"touched\":\"{}\",\"note\":\"{}\",\"noteRule\":\"{}\"}}",
+             \"chosen\":\"{}\",\"touched\":\"{}\"}}",
             colors.paper,
             colors.ink,
             colors.shelf,
@@ -439,8 +405,6 @@ fn typography() -> String {
             colors.rule,
             colors.chosen,
             colors.touched,
-            colors.note,
-            colors.note_rule,
         )
     };
     format!(
@@ -915,7 +879,7 @@ fn settings() -> String {
         })
         .collect();
     format!(
-        "{{\"dark\":{},\"contrast\":\"{}\",\"images\":{},\"archive\":{},\"slideBar\":{},\"notes\":{},\"type\":{},\
+        "{{\"dark\":{},\"contrast\":\"{}\",\"images\":{},\"archive\":{},\"slideBar\":{},\"type\":{},\
          \"styles\":[{}],\"style\":{},\
          \"faces\":[{}],\"sizes\":{},\"measures\":{},\"leadings\":{}}}",
         settings.dark,
@@ -927,7 +891,6 @@ fn settings() -> String {
         settings.images,
         settings.archive,
         settings.slide_bar,
-        settings.notes,
         type_json(&chosen),
         styles.join(","),
         chosen.style().map_or(-1, |index| index as i64),
@@ -1039,23 +1002,10 @@ fn savename(key: &str) -> String {
 /// приложения: куда его положить у читателя, решает системный диалог,
 /// и копирует туда Kotlin.
 fn save(key: &str, path: &str) -> String {
-    let Some(mut document) = document(key) else {
+    let Some(document) = document(key) else {
         return "{\"ok\":false,\"headline\":\"Nothing to save yet\"}".to_owned();
     };
-    // Заметки едут в файл вместе со статьёй (#39): в конце, своим разделом,
-    // а их картинки (#42) — рядом с картинками статьи.
-    let attached = {
-        let core = core();
-        let notes = core.notes.of(key);
-        document.markdown = notes::appended(&document.markdown, &notes);
-        save::Attached::of(&notes, &core.notes)
-    };
-    match save::write_with(
-        std::path::Path::new(path),
-        &document,
-        &attached,
-        UserAgent::Honest,
-    ) {
+    match save::write(std::path::Path::new(path), &document, UserAgent::Honest) {
         Ok(saved) => format!(
             "{{\"ok\":true,\"images\":{},\"missed\":{}}}",
             saved.images, saved.missed
@@ -1067,175 +1017,6 @@ fn save(key: &str, path: &str) -> String {
             out
         }
     }
-}
-
-/// Заметки открытой страницы (#39) — для подсветки, полки и полосы: места
-/// в UTF-16, как всё на телефоне. Сначала те, что нашлись, в порядке текста;
-/// потерявшие цитату — в конце, `from` у них −1.
-fn notes_of(address: &str) -> String {
-    let core = core();
-    let key = address.split('#').next().unwrap_or(address);
-    let notes = core.notes.of(key);
-    let text = core
-        .progress
-        .iter()
-        .find(|known| known.progress.address == key)
-        .map(|reading| reading.text.as_str());
-    let mut found: Vec<(Option<(usize, usize)>, &notes::Note)> = match text {
-        Some(text) => notes::place(text, &notes)
-            .into_iter()
-            .zip(notes.iter().copied())
-            .map(|(spot, note)| (spot.place, note))
-            .collect(),
-        None => notes.iter().map(|note| (None, *note)).collect(),
-    };
-    found.sort_by_key(|(place, _)| place.map_or(usize::MAX, |(from, _)| from));
-    let units: Vec<(usize, usize)> = match text {
-        Some(text) => {
-            let spans: Vec<(usize, usize)> = found
-                .iter()
-                .map(|(place, _)| place.unwrap_or((0, 0)))
-                .collect();
-            page::utf16_offsets(text, &spans)
-        }
-        None => vec![(0, 0); found.len()],
-    };
-    let mut out = String::from("[");
-    for (index, ((place, note), (from, to))) in found.iter().zip(units).enumerate() {
-        if index > 0 {
-            out.push(',');
-        }
-        let (from, to) = match place {
-            Some(_) => (from as i64, to as i64),
-            None => (-1, -1),
-        };
-        out.push_str(&format!(
-            "{{\"id\":{},\"from\":{from},\"to\":{to},\"quote\":",
-            note.id
-        ));
-        json_string(&mut out, &notes::preview(&note.quote));
-        out.push_str(",\"text\":");
-        json_string(&mut out, &note.text);
-        // Картинки (#42) — путями: разбирает их тот же `Core.image`.
-        out.push_str(",\"pictures\":[");
-        let paths: Vec<PathBuf> = note
-            .pictures
-            .iter()
-            .filter_map(|name| core.notes.picture(name))
-            .collect();
-        for (index, path) in paths.iter().enumerate() {
-            if index > 0 {
-                out.push(',');
-            }
-            json_string(&mut out, &path.to_string_lossy());
-        }
-        out.push_str("]}");
-    }
-    out.push(']');
-    out
-}
-
-/// Картинку — в заметку (#42). Kotlin копирует выбранную в свой кэш
-/// (из галереи она приходит адресом `content://`, ядро его не читает),
-/// ядро уменьшает её, если она совсем большая (`media::Shrink::PHONE`:
-/// копия приложения у Google — до 25 МБ на всё), и кладёт рядом с заметками.
-/// Копия в кэше уходит в любом случае.
-fn attach_picture(id: u64, path: &str) -> String {
-    let path = std::path::Path::new(path);
-    let read = std::fs::read(path);
-    let _ = std::fs::remove_file(path);
-    let kept = read
-        .map_err(|_| notes::Unkept::Nowhere)
-        .and_then(|bytes| notes::fitted(&bytes, media::Shrink::PHONE))
-        .and_then(|bytes| core().notes.attach(id, &bytes));
-    match kept {
-        Ok(_) => "{\"ok\":true}".to_owned(),
-        Err(unkept) => {
-            let mut out = String::from("{\"ok\":false,\"headline\":");
-            json_string(&mut out, unkept.headline());
-            out.push('}');
-            out
-        }
-    }
-}
-
-/// Выгрузить заметки (#42) в папку `dir` — страницы `address` или все,
-/// если адреса нет. Имя и вид файла — `save::notes_name`; дальше, в
-/// «Поделиться», его несёт Kotlin.
-fn export_notes(address: &str, dir: &str) -> String {
-    let core = core();
-    let addresses: Vec<String> = if address.is_empty() {
-        let mut addresses: Vec<String> = Vec::new();
-        for note in core.notes.all().iter().rev() {
-            if !addresses.contains(&note.address) {
-                addresses.push(note.address.clone());
-            }
-        }
-        addresses
-    } else {
-        vec![address.split('#').next().unwrap_or(address).to_owned()]
-    };
-    let pages: Vec<Vec<&notes::Note>> = addresses
-        .iter()
-        .map(|address| core.notes.of(address))
-        .filter(|page| !page.is_empty())
-        .collect();
-    if pages.is_empty() {
-        return "{\"ok\":false,\"headline\":\"No notes yet\"}".to_owned();
-    }
-    let path = std::path::Path::new(dir).join(save::notes_name(&pages));
-    match save::notes(&path, &pages, &core.notes) {
-        Ok(saved) => {
-            let mut out = String::from("{\"ok\":true,\"path\":");
-            json_string(&mut out, &saved.path.to_string_lossy());
-            out.push_str(&format!(",\"images\":{}}}", saved.images));
-            out
-        }
-        Err(error) => {
-            let mut out = String::from("{\"ok\":false,\"headline\":");
-            json_string(&mut out, describe(&error).headline);
-            out.push('}');
-            out
-        }
-    }
-}
-
-/// Новая заметка по выделению `[from, to)` в UTF-16 (#39). Только у статьи:
-/// текст страницы ядро держит там, где считает прогресс.
-fn add_note(offset: i32, address: &str, from: usize, to: usize, text: &str) -> String {
-    let mut core = core();
-    let key = address.split('#').next().unwrap_or(address);
-    let Some(reading) = core
-        .progress
-        .iter()
-        .find(|known| known.progress.address == key)
-    else {
-        return "{\"ok\":false,\"headline\":\"Notes are kept for articles\"}".to_owned();
-    };
-    let (from, to) = (
-        page::chars_of_utf16(&reading.text, from),
-        page::chars_of_utf16(&reading.text, to),
-    );
-    let selection = match notes::select(&reading.text, from, to) {
-        Ok(selection) => selection,
-        Err(refusal) => {
-            let mut out = String::from("{\"ok\":false,\"headline\":");
-            json_string(&mut out, refusal.headline());
-            out.push('}');
-            return out;
-        }
-    };
-    let title = core
-        .documents
-        .iter()
-        .rev()
-        .find(|(known, _)| known == key)
-        .map(|(_, document)| document.title.clone())
-        .unwrap_or_default();
-    let id = core
-        .notes
-        .add(key, &title, selection, text, Stamp::now(offset));
-    format!("{{\"ok\":true,\"id\":{id}}}")
 }
 
 /// Картинку — себе (#38): ядро кладёт её байты в папку `dir` под именем

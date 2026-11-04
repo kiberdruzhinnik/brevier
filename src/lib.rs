@@ -41,10 +41,6 @@ pub mod media;
 /// Глубина вложенности разметки — до разбора: глубже порога чужие
 /// рекурсивные парсеры роняют процесс.
 pub mod nesting;
-/// Заметки к странице (#39): отметки и приписки, привязанные цитатой.
-/// Считаются по тексту модели страницы, как и прогресс чтения.
-#[cfg(all(feature = "images", feature = "typeset"))]
-pub mod notes;
 pub mod outline;
 /// Страница, разложенная для показа: текст, стили, ссылки, якоря, места
 /// картинок и таблиц. Её рисует интерфейс — любой. Нужны и картинки
@@ -169,19 +165,6 @@ fn open_internal(page: &Internal, ua: UserAgent) -> Result<Document, Error> {
                 .latest_of(marks.marks().iter().map(|mark| mark.address.as_str()));
             ("Bookmarks".to_owned(), marks.page(&copies))
         }
-        #[cfg(all(feature = "images", feature = "typeset"))]
-        Internal::Notes => {
-            let notes = notes::Notes::open();
-            let addresses = notes.addresses();
-            let copies = archive::Archive::open().latest_of(addresses.iter().map(String::as_str));
-            ("Your notes".to_owned(), notes.page(&copies))
-        }
-        // Заметки отображает приложение; cli без модели страницы их не знает.
-        #[cfg(not(all(feature = "images", feature = "typeset")))]
-        Internal::Notes => (
-            "Your notes".to_owned(),
-            "# Your notes\n\nNotes are available in the Android app.\n".to_owned(),
-        ),
         Internal::Check(None) => ("Check".to_owned(), check::about().to_owned()),
         Internal::Check(Some(url)) => {
             let report = check::check(url, ua)?;
@@ -247,11 +230,7 @@ fn open_internal(page: &Internal, ua: UserAgent) -> Result<Document, Error> {
 /// языка абзац над списком в наборе по ширине шёл бы дырами. Поиск, копии
 /// и отчёт проверки несут чужой текст — их язык не наш.
 fn own_language(page: &Internal) -> Option<String> {
-    matches!(
-        page,
-        Internal::History | Internal::Bookmarks | Internal::Notes
-    )
-    .then(|| intro::LANG.to_owned())
+    matches!(page, Internal::History | Internal::Bookmarks).then(|| intro::LANG.to_owned())
 }
 
 fn open_web(url: &str, ua: UserAgent) -> Result<Document, Error> {

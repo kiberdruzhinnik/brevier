@@ -54,11 +54,6 @@ pub struct Colors {
     /// а не в синем ряду темы: полка стоит вплотную к странице.
     pub chosen: &'static str,
     pub touched: &'static str,
-    /// Заметка читателя (#39): подложка отмеченного и черта под тем, к чему
-    /// приписаны слова. Зелёный маркер, а не жёлтый: жёлтый — найденное
-    /// поиском, и одно не должно путаться с другим.
-    pub note: &'static str,
-    pub note_rule: &'static str,
 }
 
 pub fn colors(theme: Theme) -> Colors {
@@ -77,8 +72,6 @@ pub fn colors(theme: Theme) -> Colors {
             rule: "#e2d9c6",
             chosen: "#e7dabc",
             touched: "#efe7d6",
-            note: "#dfeccb",
-            note_rule: "#6f8f45",
         },
         (true, false) => Colors {
             paper: "#1d1b19",
@@ -94,8 +87,6 @@ pub fn colors(theme: Theme) -> Colors {
             rule: "#3d3833",
             chosen: "#332e27",
             touched: "#252220",
-            note: "#33402a",
-            note_rule: "#8fae6a",
         },
         // Белая бумага светится — это и есть цена, которую за контраст
         // платит читатель, попросивший его. Тёплого ряда здесь нет: серое
@@ -114,8 +105,6 @@ pub fn colors(theme: Theme) -> Colors {
             rule: "#858585",
             chosen: "#dedede",
             touched: "#e9e9e9",
-            note: "#d3efb5",
-            note_rule: "#4a7a1a",
         },
         (true, true) => Colors {
             paper: "#000000",
@@ -131,8 +120,6 @@ pub fn colors(theme: Theme) -> Colors {
             rule: "#707070",
             chosen: "#303030",
             touched: "#242424",
-            note: "#23401a",
-            note_rule: "#9ad16f",
         },
     }
 }
@@ -220,7 +207,6 @@ mod tests {
                 ("literal", c.literal, c.panel),
                 ("number", c.number, c.panel),
                 ("comment", c.comment, c.panel),
-                ("ink on a note", c.ink, c.note),
                 ("ink on a chosen row", c.ink, c.chosen),
             ];
             for (what, fore, back) in pairs {
@@ -233,12 +219,11 @@ mod tests {
 
     #[test]
     fn high_contrast_rules_are_seen_too() {
-        // Линейки и черта заметки — не текст: им WCAG просит 3:1.
+        // Линейки — не текст: им WCAG просит 3:1.
         for theme in THEMES.into_iter().filter(|theme| theme.high) {
             let c = colors(theme);
             assert!(contrast(c.rule, c.paper) >= 3.0, "{theme:?}");
             assert!(contrast(c.rule, c.shelf) >= 3.0, "{theme:?}");
-            assert!(contrast(c.note_rule, c.paper) >= 3.0, "{theme:?}");
         }
     }
 

@@ -75,11 +75,11 @@ Say in the pull request which of these you did and what you saw:
   changed since. Every difference must be one you meant; update `corpus/expected/` only
   for those.
 - **Extraction, conversion or the page model** (typesetting, the shelf, reading progress,
-  find, notes): `corpus/frozen.py snapshot` once, then `corpus/frozen.py --approve` on the
+  find): `corpus/frozen.py snapshot` once, then `corpus/frozen.py --approve` on the
   base commit and `corpus/frozen.py` on yours. It lays every saved page out as the Android
   reader does and stops on a panic, a hang, a model that does not add up, or a
   difference from the approved output.
-- **A parser** (`json.rs`, `feed.rs`, `address.rs`, `page.rs`, `notes.rs`, `typeset.rs`, the
+- **A parser** (`json.rs`, `feed.rs`, `address.rs`, `page.rs`, `typeset.rs`, the
   extraction path): run its target in `fuzz/` for a few minutes (see CONTRIBUTING, Fuzzing).
 - **`--check`:** `corpus/check.sh`, offline.
 - **The app:** tests do not cover it. Run it on a phone and say what you looked at. A

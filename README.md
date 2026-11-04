@@ -11,7 +11,7 @@ site CSS, and needs no account.
 - Articles without pop-ups, ads, and page scripts.
 - Public PDFs shared through Cloud Mail or Yandex Disk, read as clean text.
 - Documentation from Git repositories, feeds, and discussion threads.
-- Notes with pictures, saved passages, and Markdown export.
+- Saved passages, history, bookmarks, reading progress, and find on page.
 - Native Android text, not a WebView.
 
 The same Rust core handles fetching, extraction, conversion, and the page model. Pages are
@@ -31,10 +31,9 @@ articles, public Cloud Mail and Yandex Disk PDF shares, RSS/Atom/JSON feeds, Git
 GitLab documentation, and discussion threads. Pages are fetched only when you ask to read
 them; Brevier does not crawl sites or keep credentials.
 
-The reader includes saved passages and notes, pictures attached to notes, history,
-bookmarks, reading progress, find on page, feeds, a dark theme, and export of notes as
-Markdown. Notes appear beneath the paragraph they annotate. Articles can be saved for
-offline reading and shared through Android's system share sheet.
+The reader includes saved passages, history, bookmarks, reading progress, find on page,
+feeds, and a dark theme. Article footnotes remain part of the article. Articles can be
+saved for offline reading and shared through Android's system share sheet.
 
 Brevier does not run JavaScript, use a site's CSS, submit forms, or sign into websites.
 Pages that cannot be read are explained and can be opened in your browser.

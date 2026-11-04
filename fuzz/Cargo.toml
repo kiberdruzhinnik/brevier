@@ -91,13 +91,6 @@ doc = false
 bench = false
 
 [[bin]]
-name = "notes"
-path = "fuzz_targets/notes.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
 name = "typeset"
 path = "fuzz_targets/typeset.rs"
 test = false

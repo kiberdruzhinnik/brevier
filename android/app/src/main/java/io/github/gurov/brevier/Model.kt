@@ -98,36 +98,6 @@ class Page(
 class Entry(val title: String, val address: String)
 
 /**
- * Заметка на открытой странице (#39): где она (UTF-16; `from` −1 — цитаты
- * на странице больше нет), начало цитаты строкой полки, что приписано
- * и картинки читателя (#42) — пути к файлам.
- */
-class NoteSpot(
-    val id: Long,
-    val from: Int,
-    val to: Int,
-    val quote: String,
-    val text: String,
-    val pictures: List<String> = emptyList(),
-) {
-    val placed: Boolean get() = from >= 0 && to > from
-
-    /** Есть что показать под абзацем: слова или картинка. */
-    val says: Boolean get() = text.isNotEmpty() || pictures.isNotEmpty()
-
-    companion object {
-        fun of(json: JSONObject) = NoteSpot(
-            json.getLong("id"),
-            json.getInt("from"),
-            json.getInt("to"),
-            json.optString("quote"),
-            json.optString("text"),
-            json.optJSONArray("pictures")?.let { list -> (0 until list.length()).map { list.getString(it) } } ?: emptyList(),
-        )
-    }
-}
-
-/**
  * Что вернуло открытие адреса: документ или отказ. Отказ тоже страница —
  * ядро раскладывает его тем же трактом, что и статью.
  */

@@ -377,7 +377,7 @@ fn fix_breaks(md: &str) -> String {
                     || starts_block(next)
             });
             if bare.is_empty() {
-                body = String::new();
+                body.clear();
             } else if bare.chars().all(|c| matches!(c, '*' | '_')) {
                 carry = bare.to_owned();
                 continue;
