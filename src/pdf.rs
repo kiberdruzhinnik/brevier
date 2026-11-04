@@ -16,16 +16,15 @@ pub fn markdown(bytes: &[u8], title: &str) -> Option<String> {
         }));
         match pages {
             Ok(Some(pages)) if !pages.is_empty() => clean_skladchik_pages(&pages, has_footer),
-            _ if has_footer => {
+            _ => {
                 let pages = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     pdf_extract::extract_text_from_mem_by_pages(bytes)
                 }));
                 match pages {
-                    Ok(Ok(pages)) => cleanup_extracted_pages(&pages).unwrap_or(text),
-                    _ => text,
+                    Ok(Ok(pages)) => clean_skladchik_pages(&pages, has_footer),
+                    _ => remove_crimson_analytics_insertion(&text, skladchik),
                 }
             }
-            _ => text,
         }
     } else {
         text
@@ -69,6 +68,7 @@ struct PositionedTextOutput {
     pages: Vec<String>,
     glyphs: Vec<PositionedGlyph>,
     flip_ctm: Option<pdf_extract::Transform>,
+    page_num: u32,
 }
 
 impl pdf_extract::OutputDev for PositionedTextOutput {
@@ -78,11 +78,12 @@ impl pdf_extract::OutputDev for PositionedTextOutput {
 
     fn begin_page(
         &mut self,
-        _page_num: u32,
+        page_num: u32,
         media_box: &pdf_extract::MediaBox,
         _art_box: Option<(f64, f64, f64, f64)>,
     ) -> Result<(), pdf_extract::OutputError> {
         self.glyphs.clear();
+        self.page_num = page_num;
         self.flip_ctm = Some(pdf_extract::Transform::row_major(
             1.0,
             0.0,
@@ -96,7 +97,8 @@ impl pdf_extract::OutputDev for PositionedTextOutput {
 
     fn end_page(&mut self) -> Result<(), pdf_extract::OutputError> {
         self.flip_ctm = None;
-        self.pages.push(render_positioned_page(&self.glyphs));
+        self.pages
+            .push(render_positioned_page(&self.glyphs, self.page_num == 1));
         Ok(())
     }
 
@@ -136,7 +138,7 @@ impl pdf_extract::OutputDev for PositionedTextOutput {
     }
 }
 
-fn render_positioned_page(glyphs: &[PositionedGlyph]) -> String {
+fn render_positioned_page(glyphs: &[PositionedGlyph], join_initial_headline: bool) -> String {
     let mut lines: Vec<Vec<&PositionedGlyph>> = Vec::new();
     for glyph in glyphs {
         let starts_line = lines
@@ -156,27 +158,63 @@ fn render_positioned_page(glyphs: &[PositionedGlyph]) -> String {
 
     let body_font_size =
         median(glyphs.iter().map(|glyph| glyph.font_size).collect()).unwrap_or_default();
+    let line_layout = lines
+        .iter()
+        .map(|line| {
+            (
+                median(line.iter().map(|glyph| glyph.y).collect()).unwrap_or_default(),
+                median(line.iter().map(|glyph| glyph.font_size).collect()).unwrap_or_default(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let heading_lines = line_layout
+        .iter()
+        .map(|(_, font_size)| body_font_size > 0.0 && *font_size >= body_font_size * 1.18)
+        .collect::<Vec<_>>();
+    let headline = if join_initial_headline {
+        heading_lines
+            .iter()
+            .position(|is_heading| *is_heading)
+            .map(|start| {
+                let mut end = start + 1;
+                while end < lines.len() && heading_lines[end] {
+                    let previous_font_size = line_layout[end - 1].1;
+                    let line_height = line_layout[end].1.max(previous_font_size);
+                    let line_gap = (line_layout[end].0 - line_layout[end - 1].0).abs();
+                    if line_gap > line_height * 1.55 {
+                        break;
+                    }
+                    end += 1;
+                }
+                start..end
+            })
+    } else {
+        None
+    };
     let mut rendered = String::new();
-    let mut previous: Option<(&[&PositionedGlyph], f64, bool)> = None;
-    for line in &lines {
-        let line_y = median(line.iter().map(|glyph| glyph.y).collect()).unwrap_or_default();
-        let line_font_size =
-            median(line.iter().map(|glyph| glyph.font_size).collect()).unwrap_or_default();
-        let is_heading = body_font_size > 0.0 && line_font_size >= body_font_size * 1.18;
-        if let Some((previous_line, previous_y, previous_is_heading)) = previous {
-            let previous_font_size =
-                median(previous_line.iter().map(|glyph| glyph.font_size).collect())
-                    .unwrap_or_default();
+    let mut previous: Option<(usize, f64, bool)> = None;
+    for (index, line) in lines.iter().enumerate() {
+        let (line_y, line_font_size) = line_layout[index];
+        let is_heading = heading_lines[index];
+        if let Some((previous_index, previous_y, previous_is_heading)) = previous {
+            let previous_font_size = line_layout[previous_index].1;
             let line_height = line_font_size.max(previous_font_size);
             let paragraph_gap = (line_y - previous_y).abs() > line_height * 1.55;
-            rendered.push_str(if paragraph_gap || is_heading || previous_is_heading {
-                "\n\n"
+            let part_of_initial_headline = headline
+                .as_ref()
+                .is_some_and(|range| range.contains(&previous_index) && range.contains(&index));
+            if part_of_initial_headline {
+                rendered.push(' ');
             } else {
-                "\n"
-            });
+                rendered.push_str(if paragraph_gap || is_heading || previous_is_heading {
+                    "\n\n"
+                } else {
+                    "\n"
+                });
+            }
         }
         rendered.push_str(&render_positioned_line(line));
-        previous = Some((line, line_y, is_heading));
+        previous = Some((index, line_y, is_heading));
     }
     rendered
 }
@@ -250,7 +288,24 @@ fn has_skladchik_filename_marker(title: &str) -> bool {
 }
 
 fn is_skladchik_pdf(title: &str, text: &str) -> bool {
-    has_skladchik_filename_marker(title) || has_skladchik_footer(text)
+    has_skladchik_filename_marker(title)
+        || has_skladchik_footer(text)
+        || has_dated_article_series_signature(title, text)
+}
+
+fn has_dated_article_series_signature(title: &str, text: &str) -> bool {
+    let Some((date, suffix)) = title.split_at_checked(8) else {
+        return false;
+    };
+    if !date.bytes().all(|byte| byte.is_ascii_digit()) || !suffix.starts_with(" -") {
+        return false;
+    }
+
+    let normalized = normalize_signature(text);
+    let salutation = normalize_signature("ув. друзья");
+    let author = normalize_signature("автор этих взволнованных строк");
+    let normalized = format!(" {normalized} ");
+    normalized.contains(&format!(" {salutation} ")) && normalized.contains(&format!(" {author} "))
 }
 
 fn normalize_signature(text: &str) -> String {
@@ -277,6 +332,7 @@ fn clean_skladchik_pages(pages: &[String], remove_footer: bool) -> String {
     let cleaned = pages
         .iter()
         .map(|page| {
+            let page = remove_crimson_analytics_insertion(page, true);
             let mut lines = page.lines().collect::<Vec<_>>();
             while lines.first().is_some_and(|line| line.trim().is_empty()) {
                 lines.remove(0);
@@ -284,10 +340,10 @@ fn clean_skladchik_pages(pages: &[String], remove_footer: bool) -> String {
             while lines.last().is_some_and(|line| line.trim().is_empty()) {
                 lines.pop();
             }
-            if lines.first().is_some_and(|line| is_page_number(line)) {
+            while lines.first().is_some_and(|line| is_page_number(line)) {
                 lines.remove(0);
             }
-            if lines.last().is_some_and(|line| is_page_number(line)) {
+            while lines.last().is_some_and(|line| is_page_number(line)) {
                 lines.pop();
             }
 
@@ -323,6 +379,52 @@ fn clean_skladchik_pages(pages: &[String], remove_footer: bool) -> String {
     } else {
         text.trim().to_owned()
     }
+}
+
+fn remove_crimson_analytics_insertion(text: &str, is_skladchik: bool) -> String {
+    if !is_skladchik {
+        return text.to_owned();
+    }
+
+    let signature = normalize_signature("Кримсон Аналитика – CrimsonAnalytics");
+    text.split('\u{c}')
+        .map(|page| {
+            let lines = page.lines().collect::<Vec<_>>();
+            let mut cleaned = Vec::with_capacity(lines.len());
+            let mut index = 0;
+            while index < lines.len() {
+                if lines[index].trim().is_empty() {
+                    cleaned.push(lines[index]);
+                    index += 1;
+                    continue;
+                }
+
+                let mut matched = None;
+                for end in index..(index + 3).min(lines.len()) {
+                    if lines[end].trim().is_empty() {
+                        break;
+                    }
+                    let candidate = normalize_signature(&lines[index..=end].join(" "));
+                    if candidate == signature {
+                        matched = Some(end + 1);
+                        break;
+                    }
+                    if !signature.starts_with(&candidate) {
+                        break;
+                    }
+                }
+
+                if let Some(next) = matched {
+                    index = next;
+                } else {
+                    cleaned.push(lines[index]);
+                    index += 1;
+                }
+            }
+            cleaned.join("\n")
+        })
+        .collect::<Vec<_>>()
+        .join("\u{c}")
 }
 
 fn is_page_number(line: &str) -> bool {
@@ -399,6 +501,19 @@ mod tests {
             .unwrap();
     }
 
+    fn emit_line_at_size(output: &mut PositionedTextOutput, y: f64, font_size: f64, line: &str) {
+        for (index, character) in line.chars().enumerate() {
+            emit_glyph_at_size(
+                output,
+                10.0 + index as f64 * font_size * 0.5,
+                y,
+                0.5,
+                font_size,
+                &character.to_string(),
+            );
+        }
+    }
+
     #[test]
     fn malformed_pdf_bytes_are_a_clean_failure() {
         assert_eq!(markdown(b"not a PDF", "sample.pdf"), None);
@@ -435,6 +550,27 @@ mod tests {
         assert!(!is_skladchik_pdf(
             "article.pdf",
             "Article cites skladchik.org, but has no purchase footer."
+        ));
+    }
+
+    #[test]
+    fn identifies_the_dated_article_series_from_its_filename_and_text_signature() {
+        let title = "20260413 - Робот-терапевт.pdf";
+        let text = "Понедельник, УВ. друзья. Автор этих\nвзволнованных строк.";
+        assert!(has_dated_article_series_signature(title, text));
+        assert!(is_skladchik_pdf(title, text));
+
+        assert!(!has_dated_article_series_signature(
+            "20260413 - unrelated.pdf",
+            "Ув. друзья, но нет второй авторской фразы."
+        ));
+        assert!(!has_dated_article_series_signature(
+            "article.pdf",
+            "Ув. друзья. Автор этих взволнованных строк."
+        ));
+        assert!(!has_dated_article_series_signature(
+            "2026-04-13 - article.pdf",
+            "Ув. друзья. Автор этих взволнованных строк."
         ));
     }
 
@@ -479,13 +615,33 @@ mod tests {
     #[test]
     fn cleanup_removes_edge_numbers_and_the_complete_footer_but_keeps_body_numbers() {
         let pages = [
-            "1\nA numbered section 1.\nA wrapped\nparagraph.\n\nBody continues.".to_owned(),
+            "1\nA numbered section 1.\n42\nA wrapped\nparagraph.\n\nBody continues.\n4".to_owned(),
             "2\nNext page starts.\n\n skladchik.ORG\nAd\nЭтот контент\nкуплен на сайте".to_owned(),
         ];
         assert_eq!(
             clean_skladchik_pages(&pages, true),
-            "A numbered section 1. A wrapped paragraph.\n\nBody continues.\u{c}Next page starts."
+            "A numbered section 1. 42 A wrapped paragraph.\n\nBody continues.\u{c}Next page starts."
         );
+    }
+
+    #[test]
+    fn cleanup_removes_multiple_edge_numbers_but_keeps_standalone_body_numbers() {
+        let pages = ["1\n2\nArticle begins.\n\n42\n\nArticle ends.\n3\n4".to_owned()];
+        assert_eq!(
+            clean_skladchik_pages(&pages, false),
+            "Article begins.\n\n42\n\nArticle ends."
+        );
+    }
+
+    #[test]
+    fn removes_inserted_crimson_analytics_text_from_skladchik_pages_only() {
+        let excerpt = "причём эти сюжеты ещё и очень серьёзным образом\n\nКримсон Аналитика – CrimsonAnalytics\nпереплетены, причём в гораздо большей степени, чем это было раньше.";
+        assert!(!is_skladchik_pdf("ordinary.pdf", excerpt));
+        assert_eq!(
+            remove_crimson_analytics_insertion(excerpt, true),
+            "причём эти сюжеты ещё и очень серьёзным образом\n\nпереплетены, причём в гораздо большей степени, чем это было раньше."
+        );
+        assert_eq!(remove_crimson_analytics_insertion(excerpt, false), excerpt);
     }
 
     #[test]
@@ -562,6 +718,62 @@ mod tests {
             clean_skladchik_pages(&output.pages, false),
             "Opening paragraph continues here\n\nSection heading\n\nSection text"
         );
+    }
+
+    #[test]
+    fn positioned_extraction_joins_only_the_initial_wrapped_headline() {
+        let mut output = PositionedTextOutput::default();
+        let media_box = pdf_extract::MediaBox {
+            llx: 0.0,
+            lly: 0.0,
+            urx: 800.0,
+            ury: 300.0,
+        };
+        let headline = [
+            "[Новостной деск] Аналитики Сороса",
+            "рисуют кошмар Зеленского, огнемёт",
+            "протащили на заседание Евросовета,",
+            "британский мейнстрим готовится",
+            "к размену украинских территорий",
+        ];
+
+        output.begin_page(1, &media_box, None).unwrap();
+        emit_line_at_size(&mut output, 5.0, 10.0, "2 окт 19:14");
+        for (index, line) in headline.iter().enumerate() {
+            emit_line_at_size(&mut output, 20.0 + index as f64 * 12.0, 15.0, line);
+        }
+        for index in 0..8 {
+            emit_line_at_size(
+                &mut output,
+                90.0 + index as f64 * 12.0,
+                10.0,
+                "Body paragraph text continues across the page for median font sizing.",
+            );
+        }
+        emit_line_at_size(&mut output, 200.0, 15.0, "Later section heading");
+        emit_line_at_size(&mut output, 220.0, 10.0, "Text after later heading.");
+        output.end_page().unwrap();
+
+        let page = &output.pages[0];
+        let joined_headline = headline.join(" ");
+        assert!(page.contains(&format!("{joined_headline}\n\nBody paragraph text")));
+        assert!(!page.contains("Аналитики Сороса\n\nрисуют кошмар"));
+        assert!(page.contains("Later section heading\n\nText after later heading."));
+
+        output.begin_page(2, &media_box, None).unwrap();
+        for (index, line) in headline.iter().enumerate() {
+            emit_line_at_size(&mut output, 20.0 + index as f64 * 12.0, 15.0, line);
+        }
+        for index in 0..8 {
+            emit_line_at_size(
+                &mut output,
+                90.0 + index as f64 * 12.0,
+                10.0,
+                "Body paragraph text continues across the page for median font sizing.",
+            );
+        }
+        output.end_page().unwrap();
+        assert!(output.pages[1].contains("Аналитики Сороса\n\nрисуют кошмар"));
     }
 
     #[test]
