@@ -101,6 +101,11 @@ pub enum Style {
     NoteRef,
     /// Сама сноска под статьёй.
     Note,
+    /// Абзац прозы прямо за другим абзацем прозы (#59). Сам по себе ничего
+    /// не меняет; читатель, выбравший книжный набор, получает по нему
+    /// красную строку вместо воздуха. После заголовка, списка, цитаты,
+    /// картинки и строфы абзац начинается без неё — как в книге.
+    Continued,
 }
 
 impl Style {
@@ -131,6 +136,7 @@ impl Style {
             Style::Alert => "alert".to_owned(),
             Style::NoteRef => "noteref".to_owned(),
             Style::Note => "note".to_owned(),
+            Style::Continued => "continued".to_owned(),
         }
     }
 
@@ -265,6 +271,8 @@ impl Page {
     /// и заголовок у замены те же: вкладка, история и «открыть в браузере»
     /// ведут на настоящую страницу.
     pub fn guarded(document: &Document) -> Page {
+        // Раскладка — тоже работа над страницей (#57): упала — сторож знает где.
+        let _working = crate::guard::opening(&document.address.display());
         let laid = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| Page::of(document)));
         laid.unwrap_or_else(|_| {
             Page::of(&Document {
@@ -914,6 +922,9 @@ impl Writer<'_> {
                 };
                 let mut styles = outer.to_vec();
                 styles.push(body);
+                if body == Style::Body && continues_prose(node) {
+                    styles.push(Style::Continued);
+                }
                 let (start, from) = self.here();
                 self.inlines(node, &styles);
                 // Веха берётся по чистому тексту: проза уже с мягкими
@@ -1397,7 +1408,25 @@ fn stands_alone<'n>(image: &'n AstNode<'n>) -> bool {
     let Some(block) = block else {
         return true;
     };
-    !block.descendants().any(|node| {
+    !has_words(block)
+}
+
+/// Продолжает ли абзац прозу (#59): перед ним, в том же блоке, — абзац
+/// со словами, не строфа и не одна картинка. Сам он — тоже со словами:
+/// картинке красная строка ни к чему.
+fn continues_prose<'n>(paragraph: &'n AstNode<'n>) -> bool {
+    let Some(before) = paragraph.previous_sibling() else {
+        return false;
+    };
+    matches!(before.data.borrow().value, NodeValue::Paragraph)
+        && !is_verse(before)
+        && has_words(before)
+        && has_words(paragraph)
+}
+
+/// Есть ли в блоке слова, кроме подписей картинок (`alt`).
+fn has_words<'n>(block: &'n AstNode<'n>) -> bool {
+    block.descendants().any(|node| {
         let text = match &node.data.borrow().value {
             NodeValue::Text(text) => !text.trim().is_empty(),
             NodeValue::Code(_) => true,
@@ -2057,6 +2086,29 @@ mod tests {
         assert_eq!(styles_at(&page, prose_at), vec!["body"]);
         assert!(prose.contains("в\u{a0}ле"), "{prose:?}");
         assert!(prose.contains('\u{ad}'), "{prose:?}");
+    }
+
+    /// Красная строка (#59) — только абзацу, продолжающему прозу: после
+    /// заголовка, картинки, списка и строфы абзац начинается с края.
+    #[test]
+    fn a_paragraph_after_prose_is_marked_as_continued() {
+        let page = Page::of(&doc("# Title\n\n\
+             First words.\n\n\
+             Second words.\n\n\
+             ![a picture](https://e.com/p.png)\n\n\
+             After the picture.\n\n\
+             - an item\n- another item\n\n\
+             After the list.\n\n\
+             > Quoted one.\n>\n> Quoted two.\n"));
+        let styles = |words: &str| styles_at(&page, offset_of(&page, words));
+        assert_eq!(styles("First"), vec!["body"]);
+        assert_eq!(styles("Second"), vec!["body", "continued"]);
+        assert_eq!(styles("After the picture"), vec!["body"]);
+        assert!(styles("another item").contains(&"list1".to_owned()));
+        assert!(!styles("another item").contains(&"continued".to_owned()));
+        assert_eq!(styles("After the list"), vec!["body"]);
+        assert_eq!(styles("Quoted one"), vec!["quote1", "body"]);
+        assert_eq!(styles("Quoted two"), vec!["quote1", "body", "continued"]);
     }
 
     /// Сквозь весь тракт: стих из веба — строки FictionBook и строки через

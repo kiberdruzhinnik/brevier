@@ -49,7 +49,40 @@ pub enum UserAgent {
     Browser,
 }
 
+/// Optional reader-supplied User-Agent. The CLI and corpus leave this unset.
+static READERS_AGENT: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// Use a reader-supplied value for Android page requests when it is valid.
+pub fn use_readers_agent(agent: Option<&str>) {
+    let agent = agent
+        .map(str::trim)
+        .filter(|agent| !agent.is_empty() && valid_agent(agent))
+        .map(str::to_owned);
+    *READERS_AGENT
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = agent;
+}
+
+/// Only visible ASCII and spaces are allowed in the HTTP header value.
+pub fn valid_agent(agent: &str) -> bool {
+    agent
+        .bytes()
+        .all(|byte| byte == b' ' || byte.is_ascii_graphic())
+}
+
 impl UserAgent {
+    fn header(self) -> String {
+        if self == UserAgent::Honest
+            && let Some(agent) = READERS_AGENT
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone()
+        {
+            return agent;
+        }
+        self.as_str().to_owned()
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             UserAgent::Honest => "Brevier/0.1",
@@ -722,7 +755,7 @@ fn agent_within(ua: UserAgent, accept: &str, timeout: Duration) -> Agent {
         .build();
 
     Config::builder()
-        .user_agent(ua.as_str())
+        .user_agent(ua.header())
         .accept(accept)
         .tls_config(tls)
         .max_redirects(MAX_REDIRECTS)
@@ -737,6 +770,14 @@ fn agent_within(ua: UserAgent, accept: &str, timeout: Duration) -> Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_agent_accepts_only_visible_ascii_and_spaces() {
+        assert!(valid_agent("Mozilla/5.0 (Android 12; Mobile)"));
+        assert!(valid_agent("Brevier 0.22"));
+        assert!(!valid_agent("Mozilla/5.0\nInjected: header"));
+        assert!(!valid_agent("Mozilla/5.0\u{00a0}Mobile"));
+    }
 
     #[test]
     fn mime_with_parameters_is_recognised() {

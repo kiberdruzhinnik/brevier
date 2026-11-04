@@ -25,6 +25,9 @@ pub mod failure;
 /// а ленты, объявленные страницей, едут на полку.
 pub mod feed;
 pub mod fetch;
+/// Страница, уронившая Brevier, не роняет его на каждом запуске (#57):
+/// пометка на диске, пока ядро работает над страницей.
+pub mod guard;
 pub mod history;
 /// Правила под хост — одной небольшой таблицей: сейчас reddit, чьи
 /// страницы читаются через ленту.
@@ -52,6 +55,9 @@ pub mod page;
 pub mod palette;
 /// Text extraction from local PDF bytes, shared by public cloud-drive hosts.
 pub mod pdf;
+/// Картинки страниц с закладками хранятся в архиве вместе с Markdown-копиями.
+#[cfg(all(feature = "save", feature = "typeset"))]
+pub mod pictures;
 /// Прогресс чтения (#19): что прочитано и где остановились. Считается по
 /// модели страницы, поэтому живёт рядом с ней — cli он не нужен.
 #[cfg(all(feature = "images", feature = "typeset"))]

@@ -47,11 +47,24 @@ class Typography(json: JSONObject) {
     val lightHigh = Palette(json.getJSONObject("lightHigh"))
     val darkHigh = Palette(json.getJSONObject("darkHigh"))
 
-    fun palette(theme: Theme) = when {
+    fun palette(theme: Theme): Palette = when {
         theme.dark && theme.high -> darkHigh
-        theme.dark -> dark
+        theme.dark -> darkPaper(dark, theme.darkPaper)
         theme.high -> lightHigh
-        else -> light
+        else -> lightPaper(light, theme.paper)
+    }
+
+    private fun lightPaper(base: Palette, tone: String) = when (tone) {
+        "white" -> base.copy(paper = color("#ffffff"), shelf = color("#f2f2f2"), panel = color("#f0f0f0"), rule = color("#d4d4d4"), chosen = color("#dedede"), touched = color("#e9e9e9"))
+        "grey" -> base.copy(paper = color("#e6e6e6"), shelf = color("#dcdcdc"), dim = color("#625c53"), comment = color("#625c53"), panel = color("#dedede"), rule = color("#c5c5c5"), chosen = color("#cecece"), touched = color("#d6d6d6"))
+        "sepia" -> base.copy(paper = color("#f1e3c9"), ink = color("#2c2118"), shelf = color("#e8d9bd"), dim = color("#6a5c4d"), comment = color("#6a5c4d"), panel = color("#eadcc1"), rule = color("#d8c8aa"), chosen = color("#ddc9a8"), touched = color("#e5d4b7"))
+        else -> base
+    }
+
+    private fun darkPaper(base: Palette, tone: String) = when (tone) {
+        "grey" -> base.copy(paper = color("#2c2c2c"), ink = color("#e2e2e2"), shelf = color("#222222"), dim = color("#b5b5b5"), comment = color("#b5b5b5"), panel = color("#353535"), rule = color("#555555"), chosen = color("#414141"), touched = color("#303030"))
+        "black" -> base.copy(paper = color("#000000"), ink = color("#ffffff"), shelf = color("#111111"), link = color("#9fd2ff"), dim = color("#c0c0c0"), comment = color("#c0c0c0"), panel = color("#1a1a1a"), rule = color("#707070"), chosen = color("#303030"), touched = color("#242424"))
+        else -> base
     }
 
     /** Висячий отступ по ширине маркера: 0 — «•», 1..3 — цифр в номере (`outline::hang`). */
@@ -69,23 +82,39 @@ class Typography(json: JSONObject) {
 }
 
 /** Чем печатать: тема и контраст — как `palette::Theme` в ядре. */
-data class Theme(val dark: Boolean, val high: Boolean)
+data class Theme(val dark: Boolean, val high: Boolean, val paper: String = "ivory", val darkPaper: String = "warm")
 
 /** Цвета темы. */
-class Palette(json: JSONObject) {
-    val paper = Typography.color(json.getString("paper"))
-    val ink = Typography.color(json.getString("ink"))
-    val shelf = Typography.color(json.getString("shelf"))
-    val link = Typography.color(json.getString("link"))
-    val dim = Typography.color(json.getString("dim"))
-    val panel = Typography.color(json.getString("panel"))
-    val keyword = Typography.color(json.getString("keyword"))
-    val literal = Typography.color(json.getString("literal"))
-    val number = Typography.color(json.getString("number"))
-    val comment = Typography.color(json.getString("comment"))
-    val rule = Typography.color(json.getString("rule"))
-    val chosen = Typography.color(json.getString("chosen"))
-    val touched = Typography.color(json.getString("touched"))
+data class Palette(
+    val paper: Int,
+    val ink: Int,
+    val shelf: Int,
+    val link: Int,
+    val dim: Int,
+    val panel: Int,
+    val keyword: Int,
+    val literal: Int,
+    val number: Int,
+    val comment: Int,
+    val rule: Int,
+    val chosen: Int,
+    val touched: Int,
+) {
+    constructor(json: JSONObject) : this(
+        paper = Typography.color(json.getString("paper")),
+        ink = Typography.color(json.getString("ink")),
+        shelf = Typography.color(json.getString("shelf")),
+        link = Typography.color(json.getString("link")),
+        dim = Typography.color(json.getString("dim")),
+        panel = Typography.color(json.getString("panel")),
+        keyword = Typography.color(json.getString("keyword")),
+        literal = Typography.color(json.getString("literal")),
+        number = Typography.color(json.getString("number")),
+        comment = Typography.color(json.getString("comment")),
+        rule = Typography.color(json.getString("rule")),
+        chosen = Typography.color(json.getString("chosen")),
+        touched = Typography.color(json.getString("touched")),
+    )
     /** Линейка цитаты: приглушённая краска вполсилы — как в окне. */
     val quoteRule: Int get() = Color.argb(128, Color.red(dim), Color.green(dim), Color.blue(dim))
 }
@@ -100,6 +129,7 @@ data class ReaderType(
     val measure: Float,
     val leading: Float,
     val justify: Boolean,
+    val paragraphs: Float,
 ) {
     companion object {
         fun of(json: JSONObject) = ReaderType(
@@ -108,6 +138,7 @@ data class ReaderType(
             measure = json.getDouble("measure").toFloat(),
             leading = json.getDouble("leading").toFloat(),
             justify = json.optBoolean("justify"),
+            paragraphs = json.optDouble("paragraphs", 0.5).toFloat(),
         )
     }
 }
@@ -130,6 +161,8 @@ class Metrics(context: Context, val type: Typography, val zoom: Float, val reade
     val unit: Float = text / type.textPx
     /** Воздух между строками и абзацами — та же величина, что `extra` в окне. */
     val extra: Float = (reader.leading - 1f) * type.textSize * unit
+    val gap: Float = reader.paragraphs * text * reader.leading
+    val indent: Float = if (reader.paragraphs < 0.001f) text else 0f
     /** Мера: колонка не шире этого. На телефоне она обычно — весь экран. */
     val measure: Float = reader.measure * text
     /** Гарнитура текста: `noto`, `serif` или `sans`. */

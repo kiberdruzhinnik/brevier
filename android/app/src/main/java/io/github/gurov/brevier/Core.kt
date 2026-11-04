@@ -29,14 +29,50 @@ object Core {
      * на x86_64-эмуляторе): это отказ одной картинки, а не повод падать.
      */
     private var sharedCacheEnabled = false
-    private external fun imageNative(source: String, width: Int, paper: Int, fontSize: Float, natural: Boolean, privateCache: Boolean): ByteArray?
+    private external fun imageNative(source: String, page: String, width: Int, paper: Int, fontSize: Float, natural: Boolean, privateCache: Boolean): ByteArray?
 
     fun setSharedCacheEnabled(enabled: Boolean) {
         sharedCacheEnabled = enabled
     }
 
-    fun image(source: String, width: Int, paper: Int, fontSize: Float, natural: Boolean): ByteArray? =
-        imageNative(source, width, paper, fontSize, natural, !sharedCacheEnabled)
+    fun image(source: String, page: String, width: Int, paper: Int, fontSize: Float, natural: Boolean): ByteArray? =
+        imageNative(source, page, width, paper, fontSize, natural, !sharedCacheEnabled)
+
+    /** Decoded raster bytes, or a user-facing failure for one image. */
+    class Raster(val bitmap: android.graphics.Bitmap?, val trouble: String?)
+
+    /**
+     * Raster pixels start at offset zero. Android 9 and earlier can crash in
+     * copyPixelsFromBuffer when the ByteBuffer has a non-zero array offset.
+     */
+    fun raster(bytes: ByteArray?): Raster {
+        if (bytes == null || bytes.isEmpty()) return Raster(null, "The load fell through")
+        val size = bytes.size
+        when (bytes[size - 1].toInt()) {
+            1 -> return Raster(null, String(bytes, 0, size - 1))
+            0 -> Unit
+            else -> return Raster(null, "The load fell through")
+        }
+        if (size < 9) return Raster(null, "The load fell through")
+        val dimensions = java.nio.ByteBuffer.wrap(bytes, size - 9, 8)
+        val width = dimensions.int
+        val height = dimensions.int
+        val pixelBytes = width.toLong() * height.toLong() * 4L
+        if (width <= 0 || height <= 0 || pixelBytes != size - 9L) {
+            return Raster(null, "The load fell through")
+        }
+        return try {
+            val bitmap = android.graphics.Bitmap.createBitmap(
+                width,
+                height,
+                android.graphics.Bitmap.Config.ARGB_8888,
+            )
+            bitmap.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(bytes))
+            Raster(bitmap, null)
+        } catch (failure: Throwable) {
+            Raster(null, "The image did not fit in memory")
+        }
+    }
     private external fun find(text: String, needle: String): IntArray
 
     /**
@@ -106,20 +142,56 @@ object Core {
      * `contrast` — выбор читателя (#44); `null` — не выбирал, решает система.
      * `slideBar` — уезжает ли шапка, пока читают (#45).
      */
-    fun saveSettings(dark: Boolean, images: Boolean, archive: Boolean, contrast: Boolean?, slideBar: Boolean, barPosition: String) {
+    fun saveSettings(
+        dark: Boolean,
+        images: Boolean,
+        archive: Boolean,
+        contrast: Boolean?,
+        slideBar: Boolean,
+        barPosition: String,
+        ownAgent: Boolean,
+        agent: String,
+        paper: String,
+        darkPaper: String,
+        fullScreen: Boolean,
+        turning: Turning,
+    ) {
         val flags = listOf(dark, images, archive).map { if (it) "1" else "0" } +
             when (contrast) { true -> "1"; false -> "0"; null -> "" } +
-            (if (slideBar) "1" else "0") + barPosition
+            (if (slideBar) "1" else "0") + barPosition +
+            (if (ownAgent) "1" else "0") + agent.replace(FIELD, ' ') + paper + darkPaper +
+            (if (fullScreen) "1" else "0") + turning.words()
         ask("settings.save", flags.joinToString(FIELD.toString()))
     }
 
     /** Набор читателя (#4) — в `settings.tsv` рядом с темой. */
     fun saveType(type: ReaderType) {
-        val fields = listOf(type.face, type.size.toString(), type.measure.toString(), type.leading.toString(), if (type.justify) "1" else "0")
+        val fields = listOf(
+            type.face, type.size.toString(), type.measure.toString(), type.leading.toString(),
+            if (type.justify) "1" else "0", type.paragraphs.toString(),
+        )
         ask("type.save", fields.joinToString(FIELD.toString()))
     }
 
     fun session(): JSONArray = list("session", "")
+
+    /**
+     * Приложение падает на этой странице (#57): пометку — ядру, сразу. Иначе
+     * сессия подняла бы её снова, и приложение падало бы на каждом запуске.
+     */
+    fun fell(address: String) {
+        ask("fell", address)
+    }
+
+    /** Keep the crash-recovery marker until Android has made the Bitmap. */
+    fun <T> holdingPicture(work: () -> T): T {
+        ask("picture.hold", "")
+        try {
+            return work()
+        } finally {
+            ask("picture.release", "")
+        }
+    }
 
     /** Вкладка сессии: текущая ли, где в истории, где в тексте и сам путь. */
     class Opened(val current: Boolean, val at: Int, val place: Int, val addresses: List<String>)

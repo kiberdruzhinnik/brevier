@@ -212,6 +212,8 @@ pub fn grab(source: &Source, ua: UserAgent) -> Result<(Vec<u8>, Option<String>),
 /// Разобрать байты картинки. Тип берём из заголовка, но не верим ему
 /// на слово: сервер ошибается, а подпись svg видна в самих байтах.
 pub fn decode(bytes: &[u8], mime: Option<&str>, look: Look) -> Result<Raster, Error> {
+    // Разбор картинки — работа над страницей (#57): память кончается здесь.
+    let _working = crate::guard::picture();
     if bytes.is_empty() {
         return Err(Error::Media("the server sent nothing".to_owned()));
     }
@@ -232,7 +234,18 @@ pub(crate) fn is_svg(bytes: &[u8], mime: Option<&str>) -> bool {
     head.starts_with("<svg") || (head.starts_with("<?xml") && head.contains("<svg"))
 }
 
+/// Картинки крупнее этого (в пикселях) разбираются по одной (#58).
+///
+/// Разобранный снимок 6000×4000 — 72 МБ, а телефон разбирает четыре картинки
+/// разом: статья с галереей оригиналов съедала 585 МБ, и система убивала
+/// приложение — поймать такое изнутри нельзя. Мелкие идут параллельно, как
+/// и шли: ждать большую им незачем.
+const BIG_PICTURE: u64 = 4_000_000;
+static ONE_BIG_PICTURE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn raster(bytes: &[u8], look: Look) -> Result<Raster, Error> {
+    use image::metadata::Orientation;
+
     let width = look.width;
     let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
@@ -244,15 +257,42 @@ fn raster(bytes: &[u8], look: Look) -> Result<Raster, Error> {
     let fail = |e: image::ImageError| Error::Media(e.to_string());
     let mut decoder = reader.into_decoder().map_err(fail)?;
     let orientation = image::ImageDecoder::orientation(&mut decoder).map_err(fail)?;
-    let mut source = image::DynamicImage::from_decoder(decoder).map_err(fail)?;
-    source.apply_orientation(orientation);
+    let (w, h) = image::ImageDecoder::dimensions(&decoder);
+    let _one = (u64::from(w) * u64::from(h) > BIG_PICTURE).then(|| {
+        ONE_BIG_PICTURE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    });
+    let source = image::DynamicImage::from_decoder(decoder).map_err(fail)?;
     let (w, h) = (source.width().max(1), source.height().max(1));
+    let turned = matches!(
+        orientation,
+        Orientation::Rotate90
+            | Orientation::Rotate270
+            | Orientation::Rotate90FlipH
+            | Orientation::Rotate270FlipH
+    );
+    let upright = if turned { h } else { w };
 
     // В колонке картинка не шире меры и не крупнее своей натуры — как её
     // показал бы и браузер. На плотном экране под ту же величину нужно больше
     // пикселей: берём сколько есть в файле, но не больше, чем покажет экран.
-    let shown = w.min(width);
-    let width = ((shown as f32 * look.density).round() as u32).clamp(1, w);
+    let shown = upright.min(width);
+    let width = ((shown as f32 * look.density).round() as u32).clamp(1, upright);
+    // Большую сначала быстро сводим к двойной ширине (среднее по площади),
+    // и уже её поворачиваем и уменьшаем качественным фильтром: Lanczos по
+    // оригиналу держал промежуточный буфер по 16 байт на пиксель, поворот
+    // на четверть — вторую копию целиком (#58). На глаз разницы нет: до
+    // двойной ширины среднее по площади не мылит, последний шаг — Lanczos.
+    let mut source = if upright > width * 2 {
+        let factor = f64::from(width * 2) / f64::from(upright);
+        let scaled = |side: u32| ((f64::from(side) * factor).round() as u32).max(1);
+        source.thumbnail_exact(scaled(w), scaled(h))
+    } else {
+        source
+    };
+    source.apply_orientation(orientation);
+    let (w, h) = (source.width().max(1), source.height().max(1));
     // Увеличивать растр незачем: на мере он станет мылом. Уменьшаем
     // качественным фильтром — картинка в статье одна-две, время терпит.
     let source = if w > width {
@@ -535,6 +575,29 @@ mod tests {
         let raster = decode(&bytes, None, look(100, Fit::Column)).unwrap();
         assert_eq!((raster.width, raster.height), (2, 4));
         assert_eq!(size(&bytes), Some((2, 4)));
+    }
+
+    /// Large photos are reduced before the expensive final resampling pass.
+    #[test]
+    fn a_large_photo_is_reduced_to_the_column() {
+        use image::ImageEncoder;
+        let picture = image::RgbImage::from_pixel(2100, 2000, image::Rgb([40, 90, 160]));
+        let mut bytes = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut bytes)
+            .write_image(&picture, 2100, 2000, image::ExtendedColorType::Rgb8)
+            .unwrap();
+
+        let raster = decode(&bytes, Some("image/png"), look(320, Fit::Column)).unwrap();
+
+        assert_eq!((raster.width, raster.height), (320, 305));
+        assert!(
+            raster
+                .rgba
+                .iter()
+                .skip(3)
+                .step_by(4)
+                .all(|alpha| *alpha == 255)
+        );
     }
 
     #[test]

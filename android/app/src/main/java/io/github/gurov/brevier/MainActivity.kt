@@ -78,6 +78,13 @@ class MainActivity : Activity(), ArticleHost {
     /** Класть ли копию каждой прочитанной страницы в архив (#8). */
     private var archive = true
     private var zoom = 0
+    private var ownAgent = false
+    private var userAgent = ""
+    private var paper = "ivory"
+    private var darkPaper = "warm"
+    private var fullScreen = false
+    private var pageTurning = Turning()
+    private var zonesPending = false
     /** Набор читателя (#4): в `settings.tsv`, в отличие от ступени масштаба. */
     private lateinit var reader: ReaderType
 
@@ -123,13 +130,16 @@ class MainActivity : Activity(), ArticleHost {
 
     /** Строку адреса окно правит и само — пока правит, подсказки молчат. */
     private var quiet = false
-    private var hintRows: List<Pair<String, String>> = emptyList()
+    /** Строка подсказки: адрес, заголовок; `search` — «Search DuckDuckGo for …» (#50), без адреса. */
+    private data class HintRow(val address: String, val title: String, val search: Boolean)
+
+    private var hintRows: List<HintRow> = emptyList()
 
     /** Поиск: совпадения на открытой странице и на котором стоим. */
     private var hits: List<Hit> = emptyList()
     private var hit = 0
 
-    private val theme: Theme get() = Theme(dark, contrast ?: systemHigh)
+    private val theme: Theme get() = Theme(dark, contrast ?: systemHigh, paper, darkPaper)
     private val palette: Palette get() = type.palette(theme)
 
     override fun onCreate(saved: Bundle?) {
@@ -148,6 +158,12 @@ class MainActivity : Activity(), ArticleHost {
         assisted = assistance()
         images = stored.optBoolean("images", true)
         archive = stored.optBoolean("archive", true)
+        ownAgent = stored.optBoolean("ownUserAgent", false)
+        userAgent = stored.optString("userAgent", "")
+        paper = stored.optString("paper", "ivory")
+        darkPaper = stored.optString("darkPaper", "warm")
+        fullScreen = stored.optBoolean("fullScreen", false)
+        pageTurning = Turning.of(stored.optString("turn", ""))
         Core.setSharedCacheEnabled(sharedMarkdownFolder.enabled)
         reader = ReaderType.of(stored.getJSONObject("type"))
         zoom = type.zoomNormal
@@ -183,6 +199,11 @@ class MainActivity : Activity(), ArticleHost {
         if (view != null && place != null) view.post { view.settle(place, 0f) }
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && fullScreen) applySystemBars()
+    }
+
     override fun onPause() {
         super.onPause()
         main.removeCallbacks(ticker)
@@ -195,6 +216,7 @@ class MainActivity : Activity(), ArticleHost {
         // Контраст и дикторов включают в настройках системы — и возвращаются сюда.
         assisted = assistance()
         if (assisted) showBar()
+        fitSystemBars()
         val high = systemContrast()
         if (high != systemHigh) {
             val was = theme
@@ -331,7 +353,7 @@ class MainActivity : Activity(), ArticleHost {
         root.addView(shelf, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         tabList = TabList(this, fonts,
             choose = { index -> tabList.visibility = View.GONE; switchTo(index) },
-            close = { index -> closeTab(index); fillTabList() },
+            close = { index -> closeTab(index, undoable = true); fillTabList() },
             fresh = { tabList.visibility = View.GONE; newTab(null) },
         )
         root.addView(tabList, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
@@ -347,6 +369,10 @@ class MainActivity : Activity(), ArticleHost {
             browser = { askToBeBrowser() },
             typeChanged = { chosen -> changeType(chosen) },
             metricsOf = { chosen -> Metrics(this, type, type.zoomSteps[zoom], chosen) },
+            agentChanged = { own, line -> ownAgent = own; userAgent = line; saveSettings() },
+            paperChanged = { name -> changePaper(name) },
+            fullScreenChanged = { on -> changeFullScreen(on) },
+            turningChanged = { chosen -> changeTurning(chosen) },
         )
         root.addView(settings, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
 
@@ -354,7 +380,9 @@ class MainActivity : Activity(), ArticleHost {
             isSingleLine = true
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
             imeOptions = EditorInfo.IME_ACTION_GO or EditorInfo.IME_FLAG_NO_EXTRACT_UI
-            hint = "address or search"
+            // Сначала — что поиск есть (#50); поисковик назовёт строка
+            // подсказки: «Search DuckDuckGo or type an address» сюда не влезает.
+            hint = "Search or type an address"
             typeface = fonts.regular
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             setSelectAllOnFocus(true)
@@ -385,6 +413,7 @@ class MainActivity : Activity(), ArticleHost {
                 }
             })
             setOnFocusChangeListener { _, focused ->
+                fitSystemBars()
                 if (focused) {
                     showBar()
                     showCard()
@@ -428,7 +457,7 @@ class MainActivity : Activity(), ArticleHost {
             setOnItemClickListener { _, _, position, _ ->
                 val chosen = hintRows.getOrNull(position) ?: return@setOnItemClickListener
                 dismiss()
-                go(chosen.first)
+                go(chosen.address)
             }
         }
 
@@ -443,6 +472,27 @@ class MainActivity : Activity(), ArticleHost {
 
         setContentView(root)
         root.setOnApplyWindowInsetsListener { view, insets -> fitInsets(view, insets) }
+        // Полный экран (#60): поверх статьи открылось или закрылось своё —
+        // настройки, вкладки, полка, клавиатура, — и раскладка пересчиталась.
+        root.viewTreeObserver.addOnGlobalLayoutListener {
+            fitSystemBars()
+            refitHints()
+            if (zonesPending && readingOnly() && currentTab()?.view?.page != null) {
+                zonesPending = false
+                root.post { showZones() }
+            }
+            if (zonesPending && readingOnly() && currentTab()?.view?.page != null) {
+                zonesPending = false
+                root.post { showZones() }
+            }
+        }
+        // Под вырез камеры окно заходит, когда панели спрятаны: бумага до края,
+        // а текст от выреза отодвигает `fitInsets`. С Android 15 так и так.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
     }
 
     /**
@@ -453,12 +503,24 @@ class MainActivity : Activity(), ArticleHost {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
             val ime = insets.getInsets(WindowInsets.Type.ime())
+            // Панели спрятаны (#60) — у края экрана скруглённые углы: строку
+            // у края колонки они не должны срезать.
             view.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
         } else {
             @Suppress("DEPRECATION")
             view.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop, insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
         }
         return insets
+    }
+
+    /** Reapply immersive mode after focus and keep edge-to-edge insets current. */
+    private fun fitSystemBars() {
+        applySystemBars()
+        if (::root.isInitialized) root.requestApplyInsets()
+    }
+
+    private fun refitHints() {
+        if (hints.isShowing && address.hasFocus()) offerHints(address.text.toString())
     }
 
     /** Keep the article column and toolbar aligned to the selected outer edges. */
@@ -574,13 +636,23 @@ class MainActivity : Activity(), ArticleHost {
             val light = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
                 android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
             window.insetsController?.setSystemBarsAppearance(if (dark) 0 else light, light)
-        } else {
-            @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
-                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
-                if (dark) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
         }
+        applySystemBars()
         sync()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun applySystemBars() {
+        val layout = View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+        val immersive = if (fullScreen) {
+            View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        } else 0
+        val lightStatus = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R && !dark) {
+            View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+        } else 0
+        window.decorView.systemUiVisibility = layout or immersive or lightStatus
     }
 
     private fun metrics() = Metrics(this, type, type.zoomSteps[zoom], reader)
@@ -607,22 +679,89 @@ class MainActivity : Activity(), ArticleHost {
         rememberSession()
     }
 
-    private fun closeTab(index: Int) {
+    /**
+     * Закрыть вкладку. `undoable` — читатель закрыл её сам, и несколько секунд
+     * её можно вернуть (#52): промах по крестику не должен стоить вкладки.
+     * `ask` — как у `newTab`: закрылась последняя, и пустой взамен нужна ли
+     * клавиатура. При `undoable` — нет.
+     */
+    private fun closeTab(index: Int, undoable: Boolean = false, ask: Boolean = true) {
         if (index !in tabs.indices) return
+        val wasCurrent = index == current
         val tab = tabs.removeAt(index)
         leaveReading(tab)
-        // Уходя, бросаем загрузку: слушать её больше некому.
+        // Уходя, бросаем загрузку: слушать её больше некому. Место в тексте —
+        // запомнить: вернувшаяся вкладка встаёт туда же.
         tab.generation += 1
-        tab.view = null
+        release(tab)
+        if (undoable) offerUndo(tab, index, wasCurrent)
         if (tabs.isEmpty()) {
             current = 0
-            newTab(null)
+            // Закрыли, что можно вернуть, — адрес не фокусируем: карточка под
+            // ним (#29) съела бы касание, которое шло к «Undo».
+            newTab(null, ask = ask && !undoable)
             return
         }
         if (index < current || current >= tabs.size) current -= 1
         current = current.coerceIn(0, tabs.size - 1)
         switchTo(current)
         rememberSession()
+    }
+
+    /** Закрытая вкладка, которую ещё можно вернуть: она, её место в ряду, была ли впереди. */
+    private var closed: Triple<Tab, Int, Boolean>? = null
+
+    /**
+     * «Tab closed · Undo» внизу экрана (#52), как у Chrome, Firefox и Safari:
+     * закрыть сразу и дать вернуть, а не спрашивать. Над списком вкладок тоже —
+     * закрывают чаще всего оттуда.
+     */
+    private fun offerUndo(tab: Tab, index: Int, wasCurrent: Boolean) {
+        closed = Triple(tab, index, wasCurrent)
+        val said = "Tab closed · Undo"
+        notice.text = android.text.SpannableString(said).apply {
+            setSpan(android.text.style.UnderlineSpan(), said.length - 4, said.length, 0)
+        }
+        notice.contentDescription = "Tab closed. Tap to undo"
+        notice.visibility = View.VISIBLE
+        notice.bringToFront()
+        notice.setOnClickListener {
+            notice.visibility = View.GONE
+            notice.setOnClickListener(null)
+            reopenClosed()
+        }
+        main.removeCallbacksAndMessages(NOTICE)
+        main.postAtTime({
+            if (closed?.first === tab) closed = null
+            if (notice.text.toString() == said) {
+                notice.visibility = View.GONE
+                notice.setOnClickListener(null)
+            }
+        }, NOTICE, android.os.SystemClock.uptimeMillis() + UNDO_MS)
+    }
+
+    /** Вернуть закрытую вкладку на её место в ряду, с её историей и местом в тексте. */
+    private fun reopenClosed() {
+        val (tab, index, wasCurrent) = closed ?: return
+        closed = null
+        // Закрыли последнюю, и на её месте встала пустая: вернувшаяся её заменяет.
+        val blank = tabs.singleOrNull()?.takeIf { it.current() == null && !it.loading && it.shown == null }
+        if (blank != null) {
+            release(blank)
+            tabs.clear()
+            current = 0
+        }
+        // Загрузку закрытие бросило — вкладка догрузится, когда её покажут.
+        if (tab.loading) {
+            tab.loading = false
+            tab.pending = tab.current() != null
+        }
+        val at = index.coerceIn(0, tabs.size)
+        tabs.add(at, tab)
+        if (tabs.size > 1 && at <= current) current += 1
+        if (wasCurrent || tabs.size == 1) switchTo(at) else rememberSession()
+        if (tabList.visibility == View.VISIBLE) fillTabList()
+        sync()
     }
 
     /**
@@ -794,7 +933,10 @@ class MainActivity : Activity(), ArticleHost {
      */
     private fun render(tab: Tab) {
         val view = tab.view ?: return
-        if (tab == currentTab()) showBar()
+        if (tab == currentTab()) {
+            showBar()
+            showing = tab.current()
+        }
         // Упала раскладка у самого телефона (модель, которой он не ждал) —
         // объяснение на месте страницы, а не закрытое приложение со всеми
         // вкладками. Упавшее в ядре сюда не доходит: его заменяет само ядро
@@ -814,7 +956,7 @@ class MainActivity : Activity(), ArticleHost {
                 // Заметки (#39) — у ядра, на каждый показ: их могли оставить
                 // в другой вкладке на той же странице. До показа: по ним
                 // режется колонка под карточки (#42).
-                view.show(shown.page, metrics(), theme, eager = images && shown.ok, offer = shown.offer, ways = shown.ways)
+                view.show(shown.page, metrics(), theme, eager = images && shown.ok, offer = shown.offer, ways = shown.ways, address = shown.address)
                 val resume = tab.resume
                 tab.resume = null
                 val anchor = if (tab.anchorPending) shown.anchor?.let { shown.page.anchor(it) } else null
@@ -1067,7 +1209,9 @@ class MainActivity : Activity(), ArticleHost {
             notice("Opened in a new tab")
             sync()
         } else {
-            open(tab, address, remember = true)
+            // Ссылка на ту же страницу («Open it again» после падения, #57) —
+            // загрузка на месте, а не второй такой же шаг истории.
+            open(tab, address, remember = address != tab.current())
         }
     }
 
@@ -1521,6 +1665,7 @@ class MainActivity : Activity(), ArticleHost {
      */
     private fun offerContinue(tab: Tab, at: Int, share: Int) {
         val said = "Continue from $share%"
+        notice.contentDescription = null
         notice.text = android.text.SpannableString(said).apply {
             setSpan(android.text.style.UnderlineSpan(), 0, said.length, 0)
         }
@@ -1549,7 +1694,7 @@ class MainActivity : Activity(), ArticleHost {
         val found = Core.suggest(typed)
         hintRows = found.map { item ->
             val hint = item as org.json.JSONObject
-            hint.getString("address") to hint.getString("title")
+            HintRow(hint.getString("address"), hint.getString("title"), hint.optBoolean("search"))
         }
         if (hintRows.isEmpty()) {
             hints.dismiss()
@@ -1565,7 +1710,7 @@ class MainActivity : Activity(), ArticleHost {
         hints.horizontalOffset = dropMargin
         // Высота — по строкам, а не до клавиатуры: пустой хвост списка
         // закрывал страницу и ничего не предлагал.
-        hints.height = hintRows.size * dp(if (hintRows.any { it.second.isNotEmpty() }) 60f else 40f) + dp(8f)
+        hints.height = hintRows.size * dp(if (hintRows.any { it.title.isNotEmpty() }) 60f else 40f) + dp(8f)
         hints.verticalOffset = if (barBottom) -hints.height - bar.height else 0
         if (!hints.isShowing) hints.show() else hints.show()
     }
@@ -1575,15 +1720,16 @@ class MainActivity : Activity(), ArticleHost {
         override fun getItem(position: Int) = hintRows[position]
         override fun getItemId(position: Int) = position.toLong()
         override fun getView(position: Int, convert: View?, parent: ViewGroup): View {
-            val (target, title) = hintRows[position]
+            val row = hintRows[position]
             return LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(14f), dp(8f), dp(14f), dp(8f))
-                if (title.isNotEmpty()) addView(label(title, fonts, palette.ink, 14f).apply {
+                if (row.title.isNotEmpty()) addView(label(row.title, fonts, palette.ink, 14f).apply {
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.END
                 })
-                addView(label(target, fonts, palette.dim, 12f).apply {
+                // Адрес выдачи читателю ничего не скажет — у строки поиска его нет.
+                if (!row.search) addView(label(row.address, fonts, palette.dim, 12f).apply {
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.MIDDLE
                 })
@@ -1632,7 +1778,7 @@ class MainActivity : Activity(), ArticleHost {
 
     private fun showSettings() {
         showBar()
-        settings.show(palette, theme, images, archive, sharedMarkdownFolder.enabled, sharedMarkdownFolder.selected, isBrowser(), reader, slideBar, barBottom)
+        settings.show(palette, theme, images, archive, sharedMarkdownFolder.enabled, sharedMarkdownFolder.selected, isBrowser(), reader, slideBar, barBottom, ownAgent, userAgent, paper, darkPaper, fullScreen, pageTurning)
     }
 
     /** The system grants access only to the folder the reader picks. */
@@ -1665,7 +1811,64 @@ class MainActivity : Activity(), ArticleHost {
         showSettings()
     }
 
-    private fun saveSettings() = Core.saveSettings(dark, images, archive, contrast, slideBar, if (barBottom) "bottom" else "top")
+    private fun saveSettings() = Core.saveSettings(
+        dark, images, archive, contrast, slideBar, if (barBottom) "bottom" else "top", ownAgent, userAgent, paper, darkPaper, fullScreen, pageTurning,
+    )
+
+    override fun turning(): Turning = if (assisted) Turning() else pageTurning
+
+    override fun pageEnd() {
+        val next = currentTab()?.shown?.next ?: run { notice("The end of the page"); return }
+        val said = "Next page: ${next.title.ifEmpty { next.address }}"
+        notice.text = android.text.SpannableString(said).apply {
+            setSpan(android.text.style.UnderlineSpan(), 0, said.length, 0)
+        }
+        notice.visibility = View.VISIBLE
+        notice.setOnClickListener { notice.visibility = View.GONE; notice.setOnClickListener(null); go(next.address) }
+        main.removeCallbacksAndMessages(NOTICE)
+        main.postAtTime({ if (notice.text.toString() == said) { notice.visibility = View.GONE; notice.setOnClickListener(null) } }, NOTICE, android.os.SystemClock.uptimeMillis() + 8000)
+    }
+
+    private fun changeTurning(chosen: Turning) {
+        if (chosen.taps && (!pageTurning.taps || chosen.leftHand != pageTurning.leftHand)) zonesPending = true
+        if (!chosen.taps) zonesPending = false
+        pageTurning = chosen
+        saveSettings()
+    }
+
+    private fun showZones() {
+        if (!readingOnly() || root.width <= 0) return
+        val back = if (pageTurning.leftHand) Gravity.END else Gravity.START
+        val overlay = FrameLayout(this)
+        fun zone(label: String, gravity: Int, share: Float) = TextView(this).apply {
+            text = label; typeface = fonts.medium; setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+            setTextColor(palette.ink); this.gravity = Gravity.CENTER
+            setBackgroundColor((palette.chosen and 0xffffff) or 0xb0000000.toInt())
+            layoutParams = FrameLayout.LayoutParams((root.width * share).toInt(), FrameLayout.LayoutParams.MATCH_PARENT, gravity)
+        }
+        overlay.addView(zone("Back", back, 1f / 3))
+        overlay.addView(zone("Forward", if (back == Gravity.START) Gravity.END else Gravity.START, 2f / 3 - 0.005f))
+        root.addView(overlay, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        overlay.alpha = 0f
+        overlay.animate().alpha(1f).setDuration(150).withEndAction {
+            overlay.animate().alpha(0f).setStartDelay(1500).setDuration(300).withEndAction { root.removeView(overlay) }
+        }
+    }
+
+    private fun readingOnly() = settings.visibility != View.VISIBLE && tabList.visibility != View.VISIBLE &&
+        !shelf.open && findBar.visibility != View.VISIBLE && !address.hasFocus() && !assisted
+
+    private fun changePaper(name: String) {
+        if (dark) darkPaper = name else paper = name
+        saveSettings()
+        retheme()
+    }
+
+    private fun changeFullScreen(on: Boolean) {
+        fullScreen = on
+        saveSettings()
+        applySystemBars()
+    }
 
     /** Новый набор: на диск, открытой вкладке — сразу; фоновые набираются при показе. */
     private fun changeType(chosen: ReaderType) {
@@ -1784,9 +1987,13 @@ class MainActivity : Activity(), ArticleHost {
     // страницы и в её конце она на месте, на коротких и своих страницах
     // не уезжает вовсе.
 
-    /** Где шапке стоять на месте: всё, что не чтение длинной статьи. */
+    /**
+     * Где шапке стоять на месте: всё, что не чтение длинной статьи. В полном
+     * экране (#60) она уезжает и без своей настройки: место для чтения —
+     * ровно то, о чём просили, включив его.
+     */
     private fun barPinned(): Boolean {
-        if (!slideBar || selecting || assisted) return true
+        if ((!slideBar && !fullScreen) || selecting || assisted) return true
         if (address.hasFocus() || findBar.visibility == View.VISIBLE) return true
         if (shelf.open || tabList.visibility == View.VISIBLE || settings.visibility == View.VISIBLE) return true
         val tab = currentTab() ?: return true
@@ -2118,8 +2325,10 @@ class MainActivity : Activity(), ArticleHost {
 
     /** Строка состояния внизу: сама и убирается. */
     private fun notice(said: String) {
-        // Обычная строка не нажимается: предложение «Continue» (#19) ушло.
+        // Обычная строка не нажимается: предложение «Continue» (#19)
+        // и «Undo» (#52) ушли.
         notice.setOnClickListener(null)
+        notice.contentDescription = null
         notice.text = said
         notice.visibility = View.VISIBLE
         main.removeCallbacksAndMessages(NOTICE)
@@ -2157,8 +2366,14 @@ class MainActivity : Activity(), ArticleHost {
             currentTab()?.canGoBack() == true -> step(backwards = true)
             // Вкладки и место в них уже в сессии: уходим, не закрываясь.
             // С вкладки, открытой снаружи, это и есть возврат туда, откуда
-            // пришла ссылка.
-            else -> moveTaskToBack(true)
+            // пришла ссылка, — и она закрывается (#52), как в Chrome: прочитал
+            // присланное и вернулся — самый частый путь, и вкладки копились
+            // именно так. Страница остаётся в истории и в архиве.
+            else -> {
+                val tab = currentTab()
+                if (tab != null && tab.outside && tab.at <= 0) closeTab(current, ask = false)
+                moveTaskToBack(true)
+            }
         }
     }
 
@@ -2169,7 +2384,7 @@ class MainActivity : Activity(), ArticleHost {
             val done = when (event.keyCode) {
                 KeyEvent.KEYCODE_L -> { address.requestFocus(); address.selectAll(); true }
                 KeyEvent.KEYCODE_T -> { newTab(null); true }
-                KeyEvent.KEYCODE_W -> { closeTab(current); true }
+                KeyEvent.KEYCODE_W -> { closeTab(current, undoable = true); true }
                 KeyEvent.KEYCODE_TAB, KeyEvent.KEYCODE_PAGE_DOWN -> {
                     val step = if (event.isShiftPressed || event.keyCode == KeyEvent.KEYCODE_PAGE_UP) -1 else 1
                     switchTo((current + step + tabs.size) % tabs.size); true
@@ -2192,6 +2407,20 @@ class MainActivity : Activity(), ArticleHost {
             reload()
             return true
         }
+        // Клавиши громкости листают (#55), пока на экране статья и ничего
+        // поверх; иначе — громкость, как всегда. Забираем и нажатие,
+        // и отпускание, иначе система покажет ползунок громкости.
+        val volume = event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || event.keyCode == KeyEvent.KEYCODE_VOLUME_UP
+        if (volume && turning().keys && readingOnly()) {
+            val view = currentTab()?.view
+            if (view?.page != null) {
+                // Удержание не листает очередью: страница за нажатие.
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                    view.turn(forward = event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)
+                }
+                return true
+            }
+        }
         if (event.action == KeyEvent.ACTION_DOWN && event.isAltPressed) {
             when (event.keyCode) {
                 KeyEvent.KEYCODE_DPAD_LEFT -> { step(backwards = true); return true }
@@ -2208,6 +2437,7 @@ class MainActivity : Activity(), ArticleHost {
         private const val SHARED_FOLDER = 5
 
         private val NOTICE = Any()
+        private const val UNDO_MS = 6_000L
         /** Докуда растёт «Loading…», прежде чем начать сначала. */
         private const val LOADING_DOTS = 10
         /** Куда по высоте окна ставить заголовок, к которому прыгнули. */
@@ -2215,6 +2445,13 @@ class MainActivity : Activity(), ArticleHost {
         /** Доезд шапки к краю после отпускания (#45) — как у Firefox. */
         const val BAR_SETTLE_MS = 150L
         const val LISTING = "A list of links, not an article — pick one to read."
+        /**
+         * Адрес страницы на экране — для обработчика падений (`App`, #57):
+         * он зовётся из любого потока, когда активности уже не до вопросов.
+         */
+        @Volatile
+        var showing: String? = null
+
         /** Как `failure::TRIPPED` в ядре: страница, которую не удалось нарисовать. */
         const val TRIPPED = "Brevier tripped over this page"
         /** Потолок файла снаружи — тот же, что у тела страницы из сети. */

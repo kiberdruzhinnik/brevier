@@ -151,6 +151,8 @@ pub extern "system" fn Java_io_github_gurov_brevier_Core_init<'caller>(
     let outcome = unowned.with_env(|env| -> Result<(), JniError> {
         let home = home.try_to_string(env)?;
         store::set_home(PathBuf::from(home));
+        crate::guard::watch();
+        crate::fetch::use_readers_agent(Settings::load().readers_agent());
         if let Err(error) = store::remove_legacy_notes() {
             eprintln!("brevier: cannot remove annotations from an earlier version: {error}");
         }
@@ -195,6 +197,7 @@ pub extern "system" fn Java_io_github_gurov_brevier_Core_imageNative<'caller>(
     mut unowned: EnvUnowned<'caller>,
     _class: JClass<'caller>,
     source: JString<'caller>,
+    page: JString<'caller>,
     width: i32,
     paper: i32,
     font_size: f32,
@@ -203,6 +206,7 @@ pub extern "system" fn Java_io_github_gurov_brevier_Core_imageNative<'caller>(
 ) -> JByteArray<'caller> {
     let outcome = unowned.with_env(|env| -> Result<JByteArray<'caller>, JniError> {
         let source = source.try_to_string(env)?;
+        let page = page.try_to_string(env)?;
         let look = Look {
             width: width.max(1) as u32,
             paper: [(paper >> 16) as u8, (paper >> 8) as u8, paper as u8],
@@ -211,7 +215,7 @@ pub extern "system" fn Java_io_github_gurov_brevier_Core_imageNative<'caller>(
             // Телефон считает в пикселях экрана сразу.
             density: 1.0,
         };
-        let bytes = deep(move || image(&source, look, private_cache));
+        let bytes = deep(move || image(&source, &page, look, private_cache));
         env.byte_array_from_slice(&bytes)
     });
     outcome.resolve::<ThrowRuntimeExAndDefault>()
@@ -303,7 +307,26 @@ fn call(method: &str, arg: &str) -> String {
             if !field(5).is_empty() {
                 settings.bar_bottom = field(5) == "bottom";
             }
+            if !field(6).is_empty() {
+                settings.own_user_agent = field(6) == "1";
+                if crate::fetch::valid_agent(field(7).trim()) {
+                    settings.user_agent = field(7).trim().to_owned();
+                }
+            }
+            if ["ivory", "white", "grey", "sepia"].contains(&field(8)) {
+                settings.paper = field(8).to_owned();
+            }
+            if ["warm", "grey", "black"].contains(&field(9)) {
+                settings.dark_paper = field(9).to_owned();
+            }
+            if !field(10).is_empty() {
+                settings.full_screen = field(10) == "1";
+            }
+            if !field(11).is_empty() {
+                settings.turn = store::Turning::from_words(field(11));
+            }
             settings.save();
+            crate::fetch::use_readers_agent(settings.readers_agent());
             "{}".to_owned()
         }
         // Набор читателя (#4): гарнитура, кегль, мера, интерлиньяж, выключка.
@@ -323,12 +346,27 @@ fn call(method: &str, arg: &str) -> String {
                 chosen.leading = leading;
             }
             chosen.justify = field(4) == "1";
+            if let Some(paragraphs) = outline::Type::paragraphs_from(field(5)) {
+                chosen.paragraphs = paragraphs;
+            }
             settings.save();
             "{}".to_owned()
         }
         "session" => session(),
         "session.save" => {
             remember(arg);
+            "{}".to_owned()
+        }
+        "picture.hold" => {
+            crate::guard::hold();
+            "{}".to_owned()
+        }
+        "picture.release" => {
+            crate::guard::release();
+            "{}".to_owned()
+        }
+        "fell" => {
+            crate::guard::fell(arg);
             "{}".to_owned()
         }
         "reading.tick" => reading_tick(
@@ -571,6 +609,11 @@ fn open(
         Err(error) => return failure_json(&describe(&error), None),
     };
     let external = address.external();
+    let shown = address.display();
+    if crate::guard::suspected(&shown) {
+        return failure_json(&crate::failure::closed_last_time(&address), Some(external));
+    }
+    let _working = crate::guard::opening(&shown);
     let anchor = page::anchor_in(&address);
     let disk = Cache::open();
     let shared = if !fresh && shared_enabled {
@@ -699,6 +742,15 @@ fn open(
         out.push_str(",\"directory\":");
         entry_json(&mut out, "Files in this directory", &directory);
     }
+    // Следующая страница (#35): листание (#55) в конце предлагает её, а сам
+    // не уходит.
+    if let Some(next) = &document.next {
+        out.push_str(",\"next\":{\"title\":");
+        json_string(&mut out, &next.title);
+        out.push_str(",\"address\":");
+        json_string(&mut out, &next.address);
+        out.push('}');
+    }
     out.push_str(",\"page\":");
     out.push_str(&page.to_json());
     out.push('}');
@@ -757,6 +809,18 @@ fn follow(here: &str, target: &str) -> String {
 fn suggest(typed: &str) -> String {
     let hints = core().store.suggest(typed, HINTS);
     let mut out = String::from("[");
+    // Уйдёт в поиск — первой строкой «Search DuckDuckGo for “…”» (#50):
+    // адрес у неё — само напечатанное, `search` — показать без адреса.
+    if let Some(label) = address::search_row(typed) {
+        out.push_str("{\"address\":");
+        json_string(&mut out, typed.trim());
+        out.push_str(",\"title\":");
+        json_string(&mut out, &label);
+        out.push_str(",\"search\":true}");
+        if !hints.is_empty() {
+            out.push(',');
+        }
+    }
     for (index, hint) in hints.iter().enumerate() {
         if index > 0 {
             out.push(',');
@@ -788,7 +852,41 @@ fn bookmark(offset: i32, typed: &str, title: &str) -> String {
         return "{\"kept\":false}".to_owned();
     };
     let kept = core().marks.toggle(&address, title, offset);
+    if kept {
+        gather_pictures(typed);
+    }
     format!("{{\"kept\":{kept}}}")
+}
+
+/// Страницу положили в закладки (#42): её
+/// картинки, что уже скачаны, — в архив. В фоне: это копирование файлов.
+fn gather_pictures(address: &str) {
+    let key = address.split('#').next().unwrap_or(address);
+    let (document, held) = {
+        let core = core();
+        let Some(document) = core
+            .documents
+            .iter()
+            .rev()
+            .find(|(known, _)| known == key)
+            .map(|(_, document)| document.clone())
+        else {
+            return;
+        };
+        let held: HashMap<String, Arc<Vec<u8>>> = crate::markdown::images(&document.markdown)
+            .iter()
+            .filter_map(|link| match media::resolve(&document.address, link)? {
+                Source::Web(url) => core.blobs.get(&url).map(|bytes| (url, bytes)),
+                Source::File(_) => None,
+            })
+            .collect();
+        (document, held)
+    };
+    std::thread::spawn(move || {
+        crate::pictures::gather(&document, |url| {
+            held.get(url).map(|bytes| (**bytes).clone())
+        });
+    });
 }
 
 /// Секунда чтения (#19): видимое `[from, to)` в UTF-16. Ответ — доли
@@ -881,7 +979,7 @@ fn settings() -> String {
             out
         })
         .collect();
-    format!(
+    let mut out = format!(
         "{{\"dark\":{},\"contrast\":\"{}\",\"images\":{},\"archive\":{},\"slideBar\":{},\"barPosition\":\"{}\",\"type\":{},\
          \"styles\":[{}],\"style\":{},\
          \"faces\":[{}],\"sizes\":{},\"measures\":{},\"leadings\":{}}}",
@@ -902,18 +1000,42 @@ fn settings() -> String {
         choices(&outline::SIZES, chosen.size, outline::size_label),
         choices(&outline::MEASURES, chosen.measure, outline::measure_label),
         choices(&outline::LEADINGS, chosen.leading, outline::leading_label),
-    )
+    );
+    out.pop();
+    out.push_str(&format!(
+        ",\"ownUserAgent\":{},\"userAgent\":",
+        settings.own_user_agent
+    ));
+    json_string(&mut out, &settings.user_agent);
+    out.push_str(",\"paper\":");
+    json_string(&mut out, &settings.paper);
+    out.push_str(",\"darkPaper\":");
+    json_string(&mut out, &settings.dark_paper);
+    out.push_str(&format!(",\"fullScreen\":{}", settings.full_screen));
+    out.push_str(",\"turn\":");
+    json_string(&mut out, &settings.turn.words().join(","));
+    out.push_str(&format!(
+        ",\"paragraphs\":{}",
+        choices(
+            &outline::PARAGRAPHS,
+            chosen.paragraphs,
+            outline::paragraphs_label
+        )
+    ));
+    out.push('}');
+    out
 }
 
 /// Набор читателя для Kotlin (`ReaderType.of`).
 fn type_json(set: &outline::Type) -> String {
     format!(
-        "{{\"face\":\"{}\",\"size\":{},\"measure\":{},\"leading\":{},\"justify\":{}}}",
+        "{{\"face\":\"{}\",\"size\":{},\"measure\":{},\"leading\":{},\"justify\":{},\"paragraphs\":{}}}",
         set.face.name(),
         set.size,
         set.measure,
         set.leading,
         set.justify,
+        set.paragraphs,
     )
 }
 
@@ -1070,32 +1192,59 @@ fn source_of(source: &str) -> Source {
 }
 
 /// Скачать или взять из кэша, затем разобрать.
-fn image(source: &str, look: Look, private_cache: bool) -> Vec<u8> {
+fn image(source: &str, page: &str, look: Look, private_cache: bool) -> Vec<u8> {
     let source = source_of(source);
+    let page = address::parse(page).ok();
     let cached = match &source {
         Source::Web(url) => core().blobs.get(url),
         Source::File(_) => None,
     };
     // Нет в памяти — недельная копия на диске, её тоже в память.
     let disk = Cache::open();
+    let mut from_archive = false;
     let cached = cached.or_else(|| {
         if !private_cache {
+            // Shared Markdown mode still uses the durable picture archive.
+            if let Source::Web(url) = &source {
+                let kept = page
+                    .as_ref()
+                    .and_then(|page| crate::pictures::from_archive(page, url));
+                from_archive = kept.is_some();
+                return kept.map(Arc::new);
+            }
             return None;
         }
         match &source {
-            Source::Web(url) => disk.image(url).map(|bytes| {
-                let bytes = Arc::new(bytes);
-                core().blobs.put(url.clone(), bytes.clone());
-                bytes
-            }),
+            Source::Web(url) => disk
+                .image(url)
+                .or_else(|| {
+                    let kept = page
+                        .as_ref()
+                        .and_then(|page| crate::pictures::from_archive(page, url));
+                    from_archive = kept.is_some();
+                    kept
+                })
+                .map(|bytes| {
+                    let bytes = Arc::new(bytes);
+                    core().blobs.put(url.clone(), bytes.clone());
+                    bytes
+                }),
             Source::File(_) => None,
         }
     });
+    if let (Some(page), Some(bytes), Source::Web(url)) = (&page, &cached, &source)
+        && !from_archive
+    {
+        crate::pictures::offer(page, url, bytes);
+    }
     let decoded = match cached {
         Some(bytes) => media::decode(&bytes, None, look),
         // В кэш — только то, что разобралось: битые байты хранить незачем.
         None => media::grab(&source, UserAgent::Honest).and_then(|(bytes, mime)| {
             let raster = media::decode(&bytes, mime.as_deref(), look)?;
+            if let (Some(page), Source::Web(url)) = (&page, &source) {
+                crate::pictures::offer(page, url, &bytes);
+            }
             if private_cache && let Source::Web(url) = &source {
                 disk.keep_image(url, &bytes);
                 core().blobs.put(url.clone(), Arc::new(bytes));
@@ -1105,16 +1254,16 @@ fn image(source: &str, look: Look, private_cache: bool) -> Vec<u8> {
     };
     match decoded {
         Ok(raster) => {
-            let mut out = Vec::with_capacity(9 + raster.rgba.len());
-            out.push(0);
+            let mut out = raster.rgba;
+            out.reserve_exact(9);
             out.extend_from_slice(&raster.width.to_be_bytes());
             out.extend_from_slice(&raster.height.to_be_bytes());
-            out.extend_from_slice(&raster.rgba);
+            out.push(0);
             out
         }
         Err(error) => {
-            let mut out = vec![1];
-            out.extend_from_slice(describe(&error).headline.as_bytes());
+            let mut out = describe(&error).headline.as_bytes().to_vec();
+            out.push(1);
             out
         }
     }

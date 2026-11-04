@@ -654,10 +654,53 @@ pub struct Settings {
     pub slide_bar: bool,
     /// Где стоит панель телефона: умолчание наверху, окно это не умеет.
     pub bar_bottom: bool,
+    /// Строка запроса читателя; сохранена и при выключенном переключателе.
+    pub user_agent: String,
+    /// Использовать ли свою строку вместо `Brevier/0.1`.
+    pub own_user_agent: bool,
+    /// Paper tone selected for the light and dark Android themes.
+    pub paper: String,
+    pub dark_paper: String,
+    /// Hide Android system bars while reading, disabled unless selected.
+    pub full_screen: bool,
+    /// Optional Android page-turn gestures; all are off until selected.
+    pub turn: Turning,
     /// Набор читателя (#4). В файл пишется только то, что отличается
     /// от умолчания, — по той же причине, что у `shelf_width`: иначе наше
     /// нынешнее умолчание застыло бы в файле как выбор читателя.
     pub typography: Type,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Turning {
+    pub taps: bool,
+    pub swipes: bool,
+    pub keys: bool,
+    pub left_hand: bool,
+}
+
+impl Turning {
+    pub fn words(self) -> Vec<&'static str> {
+        [
+            (self.taps, "taps"),
+            (self.swipes, "swipes"),
+            (self.keys, "keys"),
+            (self.left_hand, "left-hand"),
+        ]
+        .into_iter()
+        .filter_map(|(on, word)| on.then_some(word))
+        .collect()
+    }
+
+    pub fn from_words(value: &str) -> Self {
+        let has = |word| value.split(',').any(|part| part.trim() == word);
+        Self {
+            taps: has("taps"),
+            swipes: has("swipes"),
+            keys: has("keys"),
+            left_hand: has("left-hand"),
+        }
+    }
 }
 
 impl Default for Settings {
@@ -677,6 +720,12 @@ impl Default for Settings {
             plain_archive: false,
             slide_bar: true,
             bar_bottom: false,
+            user_agent: String::new(),
+            own_user_agent: false,
+            paper: "ivory".to_owned(),
+            dark_paper: "warm".to_owned(),
+            full_screen: false,
+            turn: Turning::default(),
             typography: Type::default(),
         }
     }
@@ -700,8 +749,19 @@ impl Settings {
     pub fn at(path: impl AsRef<Path>) -> Self {
         let text = fs::read_to_string(path.as_ref()).unwrap_or_default();
         let mut settings = Self::default();
+        let mut paragraphs = false;
         for line in text.lines() {
             if line.starts_with('#') {
+                continue;
+            }
+            if let Some(rest) = line
+                .strip_prefix("user-agent\t")
+                .or_else(|| line.strip_prefix("user-agent "))
+            {
+                let agent = rest.trim();
+                if crate::fetch::valid_agent(agent) {
+                    settings.user_agent = agent.to_owned();
+                }
                 continue;
             }
             let mut parts = line.split_whitespace();
@@ -724,6 +784,21 @@ impl Settings {
                 "archive-files" => settings.plain_archive = value == "plain",
                 "bar" => settings.slide_bar = value != "stays",
                 "bar-position" => settings.bar_bottom = value == "bottom",
+                "own-user-agent" => settings.own_user_agent = value == "on",
+                "paper" if ["ivory", "white", "grey", "sepia"].contains(&value) => {
+                    settings.paper = value.to_owned()
+                }
+                "dark-paper" if ["warm", "grey", "black"].contains(&value) => {
+                    settings.dark_paper = value.to_owned()
+                }
+                "screen" => settings.full_screen = value == "full",
+                "turn" => settings.turn = Turning::from_words(value),
+                "paragraphs" => {
+                    if let Some(lines) = Type::paragraphs_from(value) {
+                        settings.typography.paragraphs = lines;
+                        paragraphs = true;
+                    }
+                }
                 "face" => {
                     if let Some(face) = Face::from_name(value) {
                         settings.typography.face = face;
@@ -747,6 +822,9 @@ impl Settings {
                 "justify" => settings.typography.justify = value == "on",
                 _ => {}
             }
+        }
+        if !paragraphs {
+            settings.typography = settings.typography.with_paragraphs_of_its_style();
         }
         settings
     }
@@ -785,6 +863,26 @@ impl Settings {
         if self.bar_bottom {
             text.push_str("bar-position\tbottom\n");
         }
+        let agent = self.user_agent.trim();
+        if !agent.is_empty() && crate::fetch::valid_agent(agent) {
+            text.push_str(&format!("user-agent\t{agent}\n"));
+        }
+        if self.own_user_agent {
+            text.push_str("own-user-agent\ton\n");
+        }
+        if self.paper != "ivory" {
+            text.push_str(&format!("paper\t{}\n", self.paper));
+        }
+        if self.dark_paper != "warm" {
+            text.push_str(&format!("dark-paper\t{}\n", self.dark_paper));
+        }
+        if self.full_screen {
+            text.push_str("screen\tfull\n");
+        }
+        let turn = self.turn.words();
+        if !turn.is_empty() {
+            text.push_str(&format!("turn\t{}\n", turn.join(",")));
+        }
         let (chosen, usual) = (self.typography, Type::default());
         if chosen.face != usual.face {
             text.push_str(&format!("face\t{}\n", chosen.face.name()));
@@ -801,7 +899,16 @@ impl Settings {
         if chosen.justify != usual.justify {
             text.push_str(&format!("justify\t{}\n", switch(chosen.justify)));
         }
+        if chosen.paragraphs != usual.paragraphs {
+            text.push_str(&format!("paragraphs\t{}\n", chosen.paragraphs_name()));
+        }
         let _ = fs::write(path, text);
+    }
+
+    pub fn readers_agent(&self) -> Option<&str> {
+        self.own_user_agent
+            .then_some(self.user_agent.trim())
+            .filter(|agent| !agent.is_empty() && crate::fetch::valid_agent(agent))
     }
 }
 
@@ -1798,12 +1905,24 @@ mod tests {
             plain_archive: true,
             slide_bar: false,
             bar_bottom: true,
+            user_agent: "Mozilla/5.0 (Android 12; Mobile)".to_owned(),
+            own_user_agent: true,
+            paper: "sepia".to_owned(),
+            dark_paper: "black".to_owned(),
+            full_screen: true,
+            turn: Turning {
+                taps: true,
+                swipes: false,
+                keys: true,
+                left_hand: true,
+            },
             typography: Type {
                 face: Face::Serif,
                 size: 18.0,
                 measure: 32.0,
                 leading: 1.65,
                 justify: true,
+                paragraphs: 0.0,
             },
         };
         chosen.save_at(&path);
@@ -1990,5 +2109,74 @@ mod tests {
         let store = Store::at(&path);
         assert_eq!(store.visits().len(), 1);
         assert_eq!(store.visits()[0].title, "fine");
+    }
+
+    #[test]
+    fn user_agent_is_optional_persistent_and_validated() {
+        let dir = temporary("user-agent");
+        let path = dir.join("settings.tsv");
+        let chosen = Settings {
+            user_agent: "Mozilla/5.0 (Android 12; Mobile)".to_owned(),
+            own_user_agent: true,
+            ..Settings::default()
+        };
+        chosen.save_at(&path);
+        assert_eq!(Settings::at(&path), chosen);
+        assert_eq!(
+            Settings::at(&path).readers_agent(),
+            Some("Mozilla/5.0 (Android 12; Mobile)")
+        );
+
+        fs::write(
+            &path,
+            "user-agent\tBad\nInjected: header\nown-user-agent\ton\n",
+        )
+        .unwrap();
+        let invalid = Settings::at(&path);
+        assert_eq!(invalid.user_agent, "Bad");
+        assert_eq!(invalid.readers_agent(), Some("Bad"));
+    }
+
+    #[test]
+    fn paragraph_spacing_is_read_and_older_files_keep_their_style() {
+        let dir = temporary("paragraphs");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.tsv");
+        fs::write(&path, "paragraphs 0.75\n").unwrap();
+        assert_eq!(Settings::at(&path).typography.paragraphs, 0.75);
+        fs::write(&path, "paragraphs 9\n").unwrap();
+        assert_eq!(Settings::at(&path).typography, Type::USUAL);
+
+        let book = crate::outline::STYLES[1].set;
+        fs::write(
+            &path,
+            "face serif\nsize 18\nmeasure 34\nleading 1.45\njustify on\n",
+        )
+        .unwrap();
+        let typography = Settings::at(&path).typography;
+        assert_eq!(typography, book);
+        assert_eq!(typography.style(), Some(1));
+
+        fs::write(&path, "size 18\n").unwrap();
+        let own = Settings::at(&path).typography;
+        assert_eq!(own.paragraphs, Type::USUAL.paragraphs);
+        assert_eq!(own.style(), None);
+    }
+
+    #[test]
+    fn paper_tones_are_independent_and_unknown_names_keep_defaults() {
+        let dir = temporary("paper-tones");
+        let path = dir.join("settings.tsv");
+        let chosen = Settings {
+            paper: "grey".to_owned(),
+            dark_paper: "black".to_owned(),
+            ..Settings::default()
+        };
+        chosen.save_at(&path);
+        assert_eq!(Settings::at(&path), chosen);
+
+        fs::write(&path, "paper\tblue\ndark-paper\twhite\n").unwrap();
+        assert_eq!(Settings::at(&path).paper, "ivory");
+        assert_eq!(Settings::at(&path).dark_paper, "warm");
     }
 }

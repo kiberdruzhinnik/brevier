@@ -25,7 +25,7 @@ private val PRIORITY = listOf(
     "body", "verse", "h1", "h2", "h3", "h4", "h5", "h6", "em", "strong", "code", "codeblock", "pad",
     "kw", "lit", "num", "com", "quote1", "quote2", "quote3", "list1", "list2", "list3",
     "inset1", "inset2", "inset3", "rule1", "rule2", "rule3", "iteminset1", "iteminset2", "iteminset3",
-    "link", "dim", "alert", "noteref", "note",
+    "link", "dim", "alert", "noteref", "note", "continued",
 )
 
 private fun ordered(styles: List<String>): List<String> =
@@ -114,6 +114,7 @@ private fun look(styles: List<String>, m: Metrics, palette: Palette): Look {
 private class Shape(
     val margin: Float,
     val hang: Float,
+    val indent: Float,
     val above: Float,
     val below: Float,
     val inside: Float,
@@ -127,6 +128,7 @@ private fun shape(styles: List<String>, m: Metrics): Shape {
     val type = m.type
     var margin = 0f
     var hang = 0f
+    var indent = 0f
     var above = 0f
     var below = 0f
     var inside = 0f
@@ -137,8 +139,9 @@ private fun shape(styles: List<String>, m: Metrics): Shape {
         when (base(style)) {
             "body" -> {
                 inside = m.extra
-                below = m.extra * 2
+                below = m.extra + m.gap
             }
+            "continued" -> indent = m.indent
             // Строфа: каждая строка — свой абзац, воздух между ними как между
             // строками прозы, перенос длинной строки — с висячим отступом (#21).
             "verse" -> {
@@ -188,7 +191,7 @@ private fun shape(styles: List<String>, m: Metrics): Shape {
             }
         }
     }
-    return Shape(margin, hang, above, below, inside, panel, quotes, tab)
+    return Shape(margin, hang, indent, above, below, inside, panel, quotes, tab)
 }
 
 /**
@@ -230,6 +233,7 @@ class FaceSpan(
 class ShapeSpan(
     private val margin: Int,
     private val hang: Int,
+    private val indent: Int,
     private val above: Int,
     private val below: Int,
     private val inside: Int,
@@ -243,7 +247,7 @@ class ShapeSpan(
 ) : LeadingMarginSpan, LineHeightSpan.WithDensity, LineBackgroundSpan {
 
     // Маркер пункта стоит у поля, перенос — под текстом, а не под маркером.
-    override fun getLeadingMargin(first: Boolean): Int = if (first) margin else margin + hang
+    override fun getLeadingMargin(first: Boolean): Int = if (first) margin + indent else margin + hang
 
     override fun drawLeadingMargin(
         c: Canvas, p: Paint, x: Int, dir: Int, top: Int, baseline: Int, bottom: Int,
@@ -516,6 +520,7 @@ fun typeset(
             ShapeSpan(
                 margin = shape.margin.toInt(),
                 hang = shape.hang.toInt(),
+                indent = shape.indent.toInt(),
                 above = shape.above.toInt(),
                 below = shape.below.toInt(),
                 inside = shape.inside.toInt(),
