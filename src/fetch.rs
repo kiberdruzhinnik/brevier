@@ -193,6 +193,21 @@ pub fn fetch(url: &str, ua: UserAgent) -> Result<Page, Error> {
 /// с ней. `--check`, `--raw`, `--html`, `--links` и `--nav` сюда не ходят —
 /// им нужен сам HTML, а не его замена.
 pub fn readable(url: &str, ua: UserAgent) -> Result<Page, Error> {
+    readable_with_ocr(url, ua, false)
+}
+
+/// Read a page, optionally enabling local OCR for public PDFs.
+pub fn readable_with_ocr(url: &str, ua: UserAgent, ocr_enabled: bool) -> Result<Page, Error> {
+    readable_with_ocr_model_dir(url, ua, ocr_enabled, None)
+}
+
+/// Android variant: supplies an app-private directory for temporary OCR models.
+pub(crate) fn readable_with_ocr_model_dir(
+    url: &str,
+    ua: UserAgent,
+    ocr_enabled: bool,
+    model_parent: Option<&std::path::Path>,
+) -> Result<Page, Error> {
     // Cloud Mail public shares are JavaScript shells. Ask the file API first
     // because its metadata carries a filename even when the URL has no suffix;
     // folders then use the listing API below.
@@ -212,8 +227,21 @@ pub fn readable(url: &str, ua: UserAgent) -> Result<Page, Error> {
                         let direct = crate::hosts::cloud_mail::download_url(url, &dispatcher)
                             .ok_or(Error::EmptyExtraction)?;
                         let pdf = binary(&direct, ua, "application/pdf", MAX_BODY)?;
-                        let body = crate::pdf::markdown(&pdf.bytes, &title)
-                            .ok_or(Error::EmptyExtraction)?;
+                        crate::load_stage::set(
+                            url,
+                            if ocr_enabled {
+                                crate::load_stage::Stage::OcrTextExtraction
+                            } else {
+                                crate::load_stage::Stage::RegularTextExtraction
+                            },
+                        );
+                        let body = crate::pdf::markdown_with_ocr_model_dir(
+                            &pdf.bytes,
+                            &title,
+                            ocr_enabled,
+                            model_parent,
+                        )
+                        .ok_or(Error::EmptyExtraction)?;
                         return Ok(Page {
                             url: url.to_owned(),
                             kind: ContentKind::Text,
@@ -290,8 +318,21 @@ pub fn readable(url: &str, ua: UserAgent) -> Result<Page, Error> {
                 let direct = crate::hosts::yandex_disk::download_url(&response)
                     .ok_or(Error::EmptyExtraction)?;
                 let pdf = binary(&direct, ua, "application/pdf", MAX_BODY)?;
-                let body =
-                    crate::pdf::markdown(&pdf.bytes, &title).ok_or(Error::EmptyExtraction)?;
+                crate::load_stage::set(
+                    url,
+                    if ocr_enabled {
+                        crate::load_stage::Stage::OcrTextExtraction
+                    } else {
+                        crate::load_stage::Stage::RegularTextExtraction
+                    },
+                );
+                let body = crate::pdf::markdown_with_ocr_model_dir(
+                    &pdf.bytes,
+                    &title,
+                    ocr_enabled,
+                    model_parent,
+                )
+                .ok_or(Error::EmptyExtraction)?;
                 return Ok(Page {
                     url: url.to_owned(),
                     kind: ContentKind::Text,
@@ -329,6 +370,7 @@ pub fn readable(url: &str, ua: UserAgent) -> Result<Page, Error> {
         }
     }
     let page = fetch(url, ua)?;
+    crate::load_stage::set(url, crate::load_stage::Stage::RegularTextExtraction);
     let Some(alternate) = alternate_markdown(&page) else {
         return Ok(page);
     };

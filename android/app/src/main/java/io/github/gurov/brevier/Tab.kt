@@ -34,6 +34,9 @@ class Tab(val id: Long) {
     /** Что показано. `null` — начальная страница или загрузка. */
     var shown: Loaded? = null
     var title = "New tab"
+    /** Regular PDF text stays available while the optional OCR version is shown. */
+    val pdfVersions = PdfTextVersions<Loaded>()
+    var loadingStage = LoadingStage.NETWORK_FETCHING
 
     /**
      * Кэш «назад/вперёд»: уже показанные страницы по адресу. «Назад» рисует

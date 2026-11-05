@@ -132,11 +132,15 @@ class Loaded(
     /** Откуда продолжить, если страницу уже читали долго (#19): UTF-16 и проценты. */
     val continueAt: Int?,
     val continueShare: Int,
+    /** Whether this PDF document is currently displayed with recognized text. */
+    val pdfOcr: Boolean,
     /** Следующая страница, если страница её назвала (#35): листание (#55) её предлагает. */
     val next: Entry? = null,
 ) {
+    val isPdf: Boolean get() = ok && title.endsWith(".pdf", ignoreCase = true)
+
     companion object {
-        fun of(json: JSONObject, asked: String): Loaded {
+        fun of(json: JSONObject, asked: String, pdfOcr: Boolean = false): Loaded {
             val ok = json.optBoolean("ok")
             return Loaded(
                 ok = ok,
@@ -161,6 +165,7 @@ class Loaded(
                 ways = json.optJSONArray("ways")?.map { entry(it as JSONObject) } ?: emptyList(),
                 continueAt = json.optJSONObject("continue")?.optInt("at"),
                 continueShare = json.optJSONObject("continue")?.optInt("share") ?: 0,
+                pdfOcr = pdfOcr,
                 next = json.optJSONObject("next")?.let(::entry),
             )
         }

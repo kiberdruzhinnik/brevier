@@ -108,13 +108,14 @@ object Core {
     fun typography(): JSONObject = obj("typography")
     fun intro(): JSONObject = obj("intro")
     fun parse(typed: String): JSONObject = obj("parse", typed)
+    fun loadingStage(address: String): String = obj("stage", address).optString("stage", "Network fetching")
 
     /**
      * Смещение от UTC в секундах — ядро пишет его в журнал рядом со временем.
      * `fresh` — мимо недельной копии на диске, прямо из сети (перезагрузка).
      */
-    fun open(address: String, fresh: Boolean = false, sharedCache: Boolean = false, sharedMarkdown: String? = null): JSONObject =
-        obj("open", utcOffset(), address, if (fresh) "1" else "0", if (sharedCache) "1" else "0", sharedMarkdown ?: "")
+    fun open(address: String, fresh: Boolean = false, sharedCache: Boolean = false, sharedMarkdown: String? = null, pdfOcr: Boolean = false, pdfOcrModelDir: String? = null): JSONObject =
+        obj("open", utcOffset(), address, if (fresh) "1" else "0", if (sharedCache) "1" else "0", sharedMarkdown ?: "", if (pdfOcr) "1" else "0", pdfOcrModelDir ?: "")
     fun follow(here: String, target: String): JSONObject = obj("follow", here, target)
 
     /**

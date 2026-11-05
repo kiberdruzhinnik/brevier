@@ -181,7 +181,11 @@ pub extern "system" fn Java_io_github_gurov_brevier_Core_call<'caller>(
     let outcome = unowned.with_env(|env| -> Result<JString<'caller>, JniError> {
         let method = method.try_to_string(env)?;
         let arg = arg.try_to_string(env)?;
-        let reply = deep(move || call(&method, &arg));
+        let reply = if method == "stage" {
+            call(&method, &arg)
+        } else {
+            deep(move || call(&method, &arg))
+        };
         JString::from_str(env, reply)
     });
     outcome.resolve::<ThrowRuntimeExAndDefault>()
@@ -273,12 +277,21 @@ fn call(method: &str, arg: &str) -> String {
         "typography" => typography(),
         "intro" => intro(),
         "parse" => parse(arg),
+        "stage" => {
+            let label = crate::load_stage::current(arg);
+            let mut out = String::from("{\"stage\":");
+            json_string(&mut out, label);
+            out.push('}');
+            out
+        }
         "open" => open(
             field(0).parse().unwrap_or(0),
             field(1),
             field(2) == "1",
             field(3) == "1",
             fields.get(4).copied().filter(|text| !text.is_empty()),
+            field(5) == "1",
+            fields.get(6).copied().filter(|text| !text.is_empty()),
         ),
         "follow" => follow(field(0), field(1)),
         "suggest" => suggest(arg),
@@ -603,6 +616,8 @@ fn open(
     fresh: bool,
     shared_enabled: bool,
     shared_markdown: Option<&str>,
+    pdf_ocr: bool,
+    pdf_ocr_model_dir: Option<&str>,
 ) -> String {
     let address = match address::parse(typed) {
         Ok(address) => address,
@@ -614,6 +629,7 @@ fn open(
         return failure_json(&crate::failure::closed_last_time(&address), Some(external));
     }
     let _working = crate::guard::opening(&shown);
+    let _load_stage = crate::load_stage::begin(&shown);
     let anchor = page::anchor_in(&address);
     let disk = Cache::open();
     let shared = if !fresh && shared_enabled {
@@ -637,14 +653,19 @@ fn open(
         Some(copy) => copy.document,
         None => match copy {
             Some(copy) => copy.document,
-            None => match crate::open(&address, UserAgent::Honest) {
+            None => match crate::open_with_ocr_model_dir(
+                &address,
+                UserAgent::Honest,
+                pdf_ocr,
+                pdf_ocr_model_dir.map(std::path::Path::new),
+            ) {
                 Ok(document) => {
-                    if !shared_enabled {
+                    if !shared_enabled && !pdf_ocr {
                         disk.keep(&address, &document);
                     }
                     // Сжатой всегда (#43): архив в закрытой папке приложения,
                     // простой файл другим программам не виден.
-                    if Settings::load().archive {
+                    if !pdf_ocr && Settings::load().archive {
                         archived = Archive::open().keep(&document, &Stamp::now(offset));
                     }
                     document
@@ -656,6 +677,9 @@ fn open(
             },
         },
     };
+    if crate::load_stage::current(&shown) == "Network fetching" {
+        crate::load_stage::set(&shown, crate::load_stage::Stage::RegularTextExtraction);
+    }
     let page = Page::guarded(&document);
 
     let (kept, offer) = {
@@ -664,7 +688,10 @@ fn open(
         // страниц. Что предложить продолжить — решает интерфейс, ядро только
         // знает, откуда.
         let mut offer = None;
-        if document.kind == Kind::Article && !matches!(document.address, Address::Internal(_)) {
+        if !pdf_ocr
+            && document.kind == Kind::Article
+            && !matches!(document.address, Address::Internal(_))
+        {
             let key = document.address.display();
             let mut progress = Progress::new(&key, &page.text, &page.anchors);
             if let Some(saved) = core.readings.find(&key).cloned() {
@@ -684,17 +711,19 @@ fn open(
         }
         // В историю идёт то, что открылось, и адрес итоговый — после
         // редиректов.
-        core.store.record_with(
-            &document.address,
-            &document.title,
-            offset,
-            archived.as_deref(),
-        );
         let key = document.address.display();
-        core.documents.retain(|(known, _)| *known != key);
-        core.documents.push_back((key.clone(), document.clone()));
-        while core.documents.len() > DOCUMENTS {
-            core.documents.pop_front();
+        if !pdf_ocr {
+            core.store.record_with(
+                &document.address,
+                &document.title,
+                offset,
+                archived.as_deref(),
+            );
+            core.documents.retain(|(known, _)| *known != key);
+            core.documents.push_back((key.clone(), document.clone()));
+            while core.documents.len() > DOCUMENTS {
+                core.documents.pop_front();
+            }
         }
         (core.marks.has(&key), offer)
     };

@@ -58,13 +58,20 @@ for abi in "$@"; do
     var=$(echo "$target" | tr '-' '_')
     upper=$(echo "$var" | tr 'a-z' 'A-Z')
     export "CC_$var=$bin/$target$api-clang"
+    export "CXX_$var=$bin/$target$api-clang++"
     export "AR_$var=$bin/llvm-ar"
     export "CARGO_TARGET_${upper}_LINKER=$bin/$target$api-clang"
     # То же для C-кода `ring`.
     export "CFLAGS_$var=-ffile-prefix-map=$cargo_home=/cargo -ffile-prefix-map=$repo=/brevier"
     cargo rustc --locked --manifest-path "$repo/Cargo.toml" --release --lib --crate-type cdylib \
-        --target "$target" --features typeset,save
+        --target "$target" --features typeset,save,pdf-ocr
     mkdir -p "$out/$abi"
     cp "$repo/target/$target/release/libbrevier.so" "$out/$abi/"
+    cxx_runtime="$ndk/toolchains/llvm/prebuilt/$(uname -s | tr 'A-Z' 'a-z')-x86_64/sysroot/usr/lib/$target/libc++_shared.so"
+    if [ ! -s "$cxx_runtime" ]; then
+        echo "missing Android C++ runtime for $abi: $cxx_runtime" >&2
+        exit 1
+    fi
+    cp "$cxx_runtime" "$out/$abi/"
     "$bin/llvm-strip" "$out/$abi/libbrevier.so"
 done

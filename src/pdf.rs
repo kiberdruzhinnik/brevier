@@ -3,14 +3,34 @@
 
 /// Extract readable text from PDF bytes and title it with the shared filename.
 pub fn markdown(bytes: &[u8], title: &str) -> Option<String> {
+    markdown_with_ocr(bytes, title, false)
+}
+
+/// OCR preference is carried here so both public-share providers share one path.
+/// The enabled branch is implemented with the renderer and recognizer below.
+pub fn markdown_with_ocr(bytes: &[u8], title: &str, _ocr_enabled: bool) -> Option<String> {
+    markdown_with_ocr_model_dir(bytes, title, _ocr_enabled, None)
+}
+
+/// Variant for Android, where the caller supplies its private cache directory
+/// for Tesseract's temporary language files.
+pub(crate) fn markdown_with_ocr_model_dir(
+    bytes: &[u8],
+    title: &str,
+    ocr_enabled: bool,
+    model_parent: Option<&std::path::Path>,
+) -> Option<String> {
+    #[cfg(not(feature = "pdf-ocr"))]
+    let _ = (ocr_enabled, model_parent);
+
     let text = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_extract::extract_text_from_mem(bytes)
     }))
     .ok()?
     .ok()?;
     let skladchik = is_skladchik_pdf(title, &text);
+    let has_footer = has_skladchik_footer(&text);
     let text = if skladchik {
-        let has_footer = has_skladchik_footer(&text);
         let pages = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             extract_skladchik_pages(bytes)
         }));
@@ -29,14 +49,54 @@ pub fn markdown(bytes: &[u8], title: &str) -> Option<String> {
     } else {
         text
     };
-    let pages = text
+    let mut pages = text
         .split('\u{c}')
         .map(str::trim)
         .filter(|page| !page.is_empty())
+        .map(str::to_owned)
         .collect::<Vec<_>>();
+    #[cfg(feature = "pdf-ocr")]
+    if ocr_enabled
+        && let Some(recognized) = crate::pdf_ocr::recognize(bytes, model_parent)
+        && let Some((positioned, widths, heights)) = extract_positioned_layout(bytes)
+    {
+        let merged = positioned
+            .iter()
+            .enumerate()
+            .map(|(index, glyphs)| {
+                let ocr = recognized.get(index).map(Vec::as_slice).unwrap_or_default();
+                let width = widths.get(index).copied().unwrap_or_default();
+                let height = heights.get(index).copied().unwrap_or_default();
+                render_positioned_page_with_ocr(
+                    glyphs,
+                    index == 0,
+                    width,
+                    height,
+                    ocr,
+                    pages.get(index).map(String::as_str).unwrap_or_default(),
+                )
+            })
+            .collect::<Vec<_>>();
+        if skladchik {
+            let merged = clean_skladchik_pages(&merged, has_footer);
+            pages = merged
+                .split('\u{c}')
+                .map(str::trim)
+                .filter(|page| !page.is_empty())
+                .map(str::to_owned)
+                .collect();
+        } else {
+            pages = merged
+                .into_iter()
+                .filter(|page| !page.trim().is_empty())
+                .collect();
+        }
+    }
+    omit_skladchik_ad_cover(&mut pages);
     if pages.is_empty() {
         return None;
     }
+    let pages = pages.iter().map(String::as_str).collect::<Vec<_>>();
     Some(format!(
         "# {}\n\n{}\n",
         crate::feed::inline(title),
@@ -55,6 +115,24 @@ fn extract_skladchik_pages(bytes: &[u8]) -> Option<Vec<String>> {
     Some(output.pages)
 }
 
+#[cfg(feature = "pdf-ocr")]
+type PositionedLayout = (Vec<Vec<PositionedGlyph>>, Vec<f64>, Vec<f64>);
+#[cfg(feature = "pdf-ocr")]
+type PositionedOcrRows = Vec<((i32, i32, i32), f64, Vec<crate::pdf_ocr::OcrWord>)>;
+
+#[cfg(feature = "pdf-ocr")]
+fn extract_positioned_layout(bytes: &[u8]) -> Option<PositionedLayout> {
+    let document = pdf_extract::Document::load_mem(bytes).ok()?;
+    let mut output = PositionedTextOutput::default();
+    pdf_extract::output_doc(&document, &mut output).ok()?;
+    Some((
+        output.positioned_pages,
+        output.page_widths,
+        output.page_heights,
+    ))
+}
+
+#[derive(Clone)]
 struct PositionedGlyph {
     x: f64,
     y: f64,
@@ -67,6 +145,9 @@ struct PositionedGlyph {
 struct PositionedTextOutput {
     pages: Vec<String>,
     glyphs: Vec<PositionedGlyph>,
+    positioned_pages: Vec<Vec<PositionedGlyph>>,
+    page_widths: Vec<f64>,
+    page_heights: Vec<f64>,
     flip_ctm: Option<pdf_extract::Transform>,
     page_num: u32,
 }
@@ -92,6 +173,8 @@ impl pdf_extract::OutputDev for PositionedTextOutput {
             0.0,
             media_box.ury - media_box.lly,
         ));
+        self.page_heights.push(media_box.ury - media_box.lly);
+        self.page_widths.push(media_box.urx - media_box.llx);
         Ok(())
     }
 
@@ -99,6 +182,7 @@ impl pdf_extract::OutputDev for PositionedTextOutput {
         self.flip_ctm = None;
         self.pages
             .push(render_positioned_page(&self.glyphs, self.page_num == 1));
+        self.positioned_pages.push(self.glyphs.clone());
         Ok(())
     }
 
@@ -219,6 +303,223 @@ fn render_positioned_page(glyphs: &[PositionedGlyph], join_initial_headline: boo
     rendered
 }
 
+#[cfg(feature = "pdf-ocr")]
+fn render_positioned_page_with_ocr(
+    glyphs: &[PositionedGlyph],
+    join_initial_headline: bool,
+    page_width: f64,
+    page_height: f64,
+    ocr: &[crate::pdf_ocr::OcrWord],
+    native_text: &str,
+) -> String {
+    let mut native_lines: Vec<Vec<&PositionedGlyph>> = Vec::new();
+    for glyph in glyphs {
+        let starts_line = native_lines
+            .last()
+            .and_then(|line| line.last())
+            .is_some_and(|previous| {
+                let line_delta = (glyph.y - previous.y).abs();
+                line_delta > glyph.font_size.max(previous.font_size) * 0.5
+                    || (glyph.x < previous.x
+                        && line_delta > glyph.font_size.max(previous.font_size) * 0.2)
+            });
+        if native_lines.is_empty() || starts_line {
+            native_lines.push(Vec::new());
+        }
+        native_lines.last_mut().unwrap().push(glyph);
+    }
+    let body_size = median(glyphs.iter().map(|glyph| glyph.font_size).collect()).unwrap_or(10.0);
+    let mut rows = native_lines
+        .iter()
+        .map(|line| {
+            (
+                median(line.iter().map(|glyph| glyph.y).collect()).unwrap_or_default(),
+                median(line.iter().map(|glyph| glyph.font_size).collect()).unwrap_or(body_size),
+                render_positioned_line(line),
+                false,
+            )
+        })
+        .collect::<Vec<_>>();
+    let native_words = normalize_signature(native_text)
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let native_compact = native_words.concat();
+    let mut ocr_rows = PositionedOcrRows::new();
+    for word in ocr {
+        let y0 = word.top * page_height;
+        if let Some((_, _, words)) = ocr_rows.iter_mut().find(|(line, _, _)| *line == word.line) {
+            words.push(word.clone());
+        } else {
+            ocr_rows.push((word.line, y0, vec![word.clone()]));
+        }
+    }
+    for (_, y, mut words) in ocr_rows {
+        words.sort_by(|left, right| (left.left * page_width).total_cmp(&(right.left * page_width)));
+        let mut text_words = words
+            .iter()
+            .filter(|word| !covered_by_native_glyphs(word, glyphs, page_width, page_height))
+            .map(|word| word.text.clone())
+            .collect::<Vec<_>>();
+        let shared_prefix = (2..=text_words.len())
+            .rev()
+            .find(|length| {
+                let prefix = text_words[..*length]
+                    .iter()
+                    .map(|word| normalize_signature(word).replace(' ', ""))
+                    .collect::<String>();
+                native_compact.contains(&prefix)
+            })
+            .unwrap_or(0);
+        text_words.drain(..shared_prefix);
+        let mut ocr_words = Vec::new();
+        let mut word_ranges = Vec::with_capacity(text_words.len());
+        for word in &text_words {
+            let start = ocr_words.len();
+            ocr_words.extend(
+                normalize_signature(word)
+                    .split_whitespace()
+                    .map(str::to_owned),
+            );
+            word_ranges.push(start..ocr_words.len());
+        }
+        let overlaps = overlapping_ocr_words(&ocr_words, &native_words);
+        text_words = text_words
+            .into_iter()
+            .zip(word_ranges)
+            .filter_map(|(word, range)| {
+                (!range.clone().all(|index| overlaps[index])).then_some(word)
+            })
+            .collect();
+        let text = text_words.join(" ");
+        if !text.is_empty() {
+            rows.push((y + body_size * 0.8, body_size, text, true));
+        }
+    }
+    rows.sort_by(|left, right| {
+        left.0
+            .total_cmp(&right.0)
+            .then_with(|| left.3.cmp(&right.3))
+    });
+
+    let mut output = String::new();
+    let mut previous: Option<(f64, f64, bool)> = None;
+    let first_heading_size = rows
+        .iter()
+        .map(|row| row.1)
+        .find(|size| *size >= body_size * 1.18);
+    for (index, (y, size, text, is_ocr)) in rows.iter().enumerate() {
+        if let Some((previous_y, previous_size, previous_ocr)) = previous {
+            let gap = (y - previous_y).abs();
+            let is_heading = *size >= body_size * 1.18;
+            let previous_heading = previous_size >= body_size * 1.18;
+            let join_headline = join_initial_headline
+                && first_heading_size.is_some()
+                && index == 1
+                && is_heading
+                && !is_ocr;
+            output.push_str(
+                if join_headline
+                    || (*is_ocr && previous_ocr && gap <= size.max(previous_size) * 1.8)
+                {
+                    " "
+                } else if gap > size.max(previous_size) * 1.55 || is_heading || previous_heading {
+                    "\n\n"
+                } else {
+                    "\n"
+                },
+            );
+        }
+        if *is_ocr && !previous.is_some_and(|(_, _, was_ocr)| was_ocr) {
+            output.push_str("[OCR] ");
+        }
+        output.push_str(text);
+        previous = Some((*y, *size, *is_ocr));
+    }
+    output
+}
+
+#[cfg(feature = "pdf-ocr")]
+fn overlapping_ocr_words(left: &[String], right: &[String]) -> Vec<bool> {
+    let mut previous = vec![0; right.len() + 1];
+    let mut current = vec![0; right.len() + 1];
+    let mut overlapping = vec![false; left.len()];
+    for (i, left_word) in left.iter().enumerate() {
+        current[0] = 0;
+        for (index, right_word) in right.iter().enumerate() {
+            current[index + 1] = if ocr_words_match(left_word, right_word) {
+                previous[index] + 1
+            } else {
+                0
+            };
+            let run = current[index + 1];
+            if run >= 3 {
+                overlapping[i + 1 - run..=i].fill(true);
+            }
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    overlapping
+}
+
+#[cfg(feature = "pdf-ocr")]
+fn ocr_words_match(left: &str, right: &str) -> bool {
+    if left == right {
+        return true;
+    }
+    let left = left.chars().collect::<Vec<_>>();
+    let right = right.chars().collect::<Vec<_>>();
+    let longest = left.len().max(right.len());
+    if longest < 5 {
+        return false;
+    }
+    let mut previous = (0..=right.len()).collect::<Vec<_>>();
+    let mut current = vec![0; right.len() + 1];
+    for (i, left_char) in left.iter().enumerate() {
+        current[0] = i + 1;
+        for (j, right_char) in right.iter().enumerate() {
+            current[j + 1] = (previous[j + 1] + 1)
+                .min(current[j] + 1)
+                .min(previous[j] + usize::from(left_char != right_char));
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[right.len()] <= (longest / 8).max(1)
+}
+
+#[cfg(feature = "pdf-ocr")]
+fn covered_by_native_glyphs(
+    word: &crate::pdf_ocr::OcrWord,
+    glyphs: &[PositionedGlyph],
+    page_width: f64,
+    page_height: f64,
+) -> bool {
+    let left = word.left * page_width;
+    let right = left + word.width * page_width;
+    let top = word.top * page_height;
+    let bottom = top + word.height * page_height;
+    let span = right - left;
+    if span <= 0.0 {
+        return false;
+    }
+    let covered = glyphs
+        .iter()
+        .filter(|glyph| {
+            !glyph.text.trim().is_empty()
+                && glyph.y >= top - glyph.font_size * 0.35
+                && glyph.y <= bottom + glyph.font_size * 0.35
+                && glyph.advance.is_finite()
+                && glyph.advance > 0.0
+        })
+        .map(|glyph| {
+            let glyph_left = glyph.x.max(left);
+            let glyph_right = (glyph.x + glyph.advance).min(right);
+            (glyph_right - glyph_left).max(0.0)
+        })
+        .sum::<f64>();
+    covered / span >= 0.4
+}
+
 fn render_positioned_line(glyphs: &[&PositionedGlyph]) -> String {
     let advance_scale = median(
         glyphs
@@ -321,6 +622,21 @@ fn normalize_signature(text: &str) -> String {
         })
         .collect::<String>();
     normalized.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn is_skladchik_ad_cover(page: &str) -> bool {
+    let normalized = normalize_signature(page);
+    normalized.contains("куплено на skladchik org")
+        && normalized.contains("все самые свежие курсы по лучшей цене")
+}
+
+fn omit_skladchik_ad_cover(pages: &mut Vec<String>) {
+    if pages
+        .first()
+        .is_some_and(|page| is_skladchik_ad_cover(page))
+    {
+        pages.remove(0);
+    }
 }
 
 /// Apply Skladchik cleanup to page-level text only when its footer signature is present.
@@ -436,6 +752,98 @@ mod tests {
     use super::*;
     use pdf_extract::OutputDev;
 
+    #[test]
+    fn disabled_ocr_keeps_existing_pdf_failure_behavior() {
+        assert!(markdown_with_ocr(b"not a PDF", "sample.pdf", false).is_none());
+    }
+
+    #[cfg(feature = "pdf-ocr")]
+    #[test]
+    fn positioned_ocr_adds_only_uncovered_words_after_the_native_line() {
+        let glyphs = vec![PositionedGlyph {
+            x: 10.0,
+            y: 100.0,
+            font_size: 10.0,
+            advance: 160.0,
+            text: "Согласно определению Кембриджского словаря,".to_owned(),
+        }];
+        let words = [
+            "Согласно",
+            "определению",
+            "Кембриджского",
+            "словаря,",
+            "термин",
+            "«старые",
+            "деньги»",
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, text)| crate::pdf_ocr::OcrWord {
+            text: text.to_owned(),
+            top: 0.95,
+            left: index as f64 * 0.08,
+            width: 0.06,
+            height: 0.04,
+            line: (1, 1, 1),
+        })
+        .collect::<Vec<_>>();
+
+        let native = "Согласно определению Кембриджского словаря,";
+        let text = render_positioned_page_with_ocr(&glyphs, false, 500.0, 100.0, &words, native);
+        let flattened = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(flattened.contains("Согласно определению Кембриджского словаря, [OCR] термин"));
+        assert_eq!(text.matches("Согласно").count(), 1);
+        assert_eq!(text.matches("[OCR]").count(), 1);
+    }
+
+    #[cfg(feature = "pdf-ocr")]
+    #[test]
+    fn positioned_ocr_drops_words_covered_by_native_glyphs() {
+        let native =
+            "Любопытство общественно поощряемая черта характера поэтому ей можно хвастаться";
+        let glyphs = vec![PositionedGlyph {
+            x: 10.0,
+            y: 100.0,
+            font_size: 10.0,
+            advance: 480.0,
+            text: native.to_owned(),
+        }];
+        let words = [
+            "поошряемая",
+            "черта",
+            "характера",
+            "поэтому",
+            "ей",
+            "можно",
+            "хвастаться",
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, text)| crate::pdf_ocr::OcrWord {
+            text: text.to_owned(),
+            top: 0.95,
+            left: index as f64 * 0.08,
+            width: 0.06,
+            height: 0.04,
+            line: (1, 1, 1),
+        })
+        .collect::<Vec<_>>();
+
+        let text = render_positioned_page_with_ocr(&glyphs, false, 500.0, 100.0, &words, native);
+        assert!(text.contains(native));
+        assert_eq!(text.matches("[OCR]").count(), 0);
+    }
+
+    #[cfg(feature = "pdf-ocr")]
+    #[test]
+    fn ocr_runtime_failure_does_not_panic_or_replace_native_content() {
+        assert!(crate::pdf_ocr::recognize(b"not a PDF", None).is_none());
+        assert_eq!(
+            markdown_with_ocr(b"not a PDF", "sample.pdf", true),
+            markdown_with_ocr(b"not a PDF", "sample.pdf", false)
+        );
+    }
+
     const MARAHOVSKY_FOOTER: &str = "\
         article body\n\n\
         skladchik.ORG\n\
@@ -525,6 +933,45 @@ mod tests {
             markdown(&sample_pdf(), "research.pdf").as_deref(),
             Some("# research.pdf\n\nYandex document text.\n")
         );
+    }
+
+    #[test]
+    fn identifies_the_skladchik_ad_cover_from_its_purchase_notice_and_sales_slogan() {
+        let supplied_cover = "куплено на\nskladchik.ORG\nВсе самые свежие\nкурсы по лучшей цене!";
+        assert!(is_skladchik_ad_cover(supplied_cover));
+        assert!(!is_skladchik_ad_cover("куплено на SKLADCHIK.ORG"));
+        assert!(!is_skladchik_ad_cover(
+            "В статье упомянуты skladchik.ORG и покупка на сайте."
+        ));
+        assert!(!is_skladchik_ad_cover(
+            "Все самые свежие курсы по лучшей цене!"
+        ));
+    }
+
+    #[test]
+    fn omits_only_a_matching_first_page_and_preserves_article_pages() {
+        let cover = "куплено на\nskladchik.ORG\nВсе самые свежие\nкурсы по лучшей цене!";
+        let later_ad_like_text = cover.to_owned();
+        let mut pages = vec![
+            cover.to_owned(),
+            "Статья начинается здесь; skladchik.ORG упоминается в тексте.".to_owned(),
+            later_ad_like_text,
+        ];
+
+        omit_skladchik_ad_cover(&mut pages);
+
+        assert_eq!(pages.len(), 2);
+        assert!(pages[0].starts_with("Статья начинается здесь"));
+        assert!(pages[1].starts_with("куплено на"));
+    }
+
+    #[test]
+    fn preserves_the_first_page_when_only_the_purchase_phrase_matches() {
+        let mut pages = vec!["куплено на SKLADCHIK.ORG".to_owned(), "Article".to_owned()];
+
+        omit_skladchik_ad_cover(&mut pages);
+
+        assert_eq!(pages, ["куплено на SKLADCHIK.ORG", "Article"]);
     }
 
     #[test]

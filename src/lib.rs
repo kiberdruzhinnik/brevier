@@ -36,6 +36,8 @@ pub mod hosts;
 pub mod intro;
 /// JSON в дерево — своим разбором, для JSON Feed.
 pub mod json;
+/// Current Android network/extraction phase for visible load feedback.
+pub mod load_stage;
 pub mod markdown;
 /// Картинки. За фичей `images`: корпусу M0 декодеры не нужны, а лишний
 /// код в бинарнике про безопасность — лишняя поверхность.
@@ -55,6 +57,9 @@ pub mod page;
 pub mod palette;
 /// Text extraction from local PDF bytes, shared by public cloud-drive hosts.
 pub mod pdf;
+/// Optional local PDF rendering and OCR; compiled only into the Android reader.
+#[cfg(feature = "pdf-ocr")]
+pub mod pdf_ocr;
 /// Картинки страниц с закладками хранятся в архиве вместе с Markdown-копиями.
 #[cfg(all(feature = "save", feature = "typeset"))]
 pub mod pictures;
@@ -149,11 +154,30 @@ pub fn init_crypto() {
 
 /// Открыть адрес.
 pub fn open(address: &Address, ua: UserAgent) -> Result<Document, Error> {
+    open_with_ocr(address, ua, false)
+}
+
+/// Open an address with optional local OCR for supported documents.
+pub fn open_with_ocr(
+    address: &Address,
+    ua: UserAgent,
+    ocr_enabled: bool,
+) -> Result<Document, Error> {
+    open_with_ocr_model_dir(address, ua, ocr_enabled, None)
+}
+
+/// Android variant: supplies an app-private directory for temporary OCR models.
+pub fn open_with_ocr_model_dir(
+    address: &Address,
+    ua: UserAgent,
+    ocr_enabled: bool,
+    model_parent: Option<&Path>,
+) -> Result<Document, Error> {
     match address {
-        Address::Web(url) => open_web(url, ua),
+        Address::Web(url) => open_web(url, ua, ocr_enabled, model_parent),
         Address::Repo(repo) => open_repo(repo, ua),
         Address::File(path) => open_file(path),
-        Address::Internal(page) => open_internal(page, ua),
+        Address::Internal(page) => open_internal(page, ua, ocr_enabled, model_parent),
     }
 }
 
@@ -161,7 +185,12 @@ pub fn open(address: &Address, ua: UserAgent) -> Result<Document, Error> {
 /// есть диск: читаем его заново, а не из памяти окна, — так страница верна
 /// и тогда, когда программа открыта дважды. Проверка ходит в сеть, как
 /// `--check`, — за той страницей, которую проверяет.
-fn open_internal(page: &Internal, ua: UserAgent) -> Result<Document, Error> {
+fn open_internal(
+    page: &Internal,
+    ua: UserAgent,
+    ocr_enabled: bool,
+    model_parent: Option<&Path>,
+) -> Result<Document, Error> {
     let mut archived = None;
     let (title, markdown) = match page {
         Internal::History => ("History".to_owned(), store::Store::open().page()),
@@ -182,7 +211,14 @@ fn open_internal(page: &Internal, ua: UserAgent) -> Result<Document, Error> {
         }
         // Снимок Wayback (#9) — страница из сети, только адрес её узнаём
         // у самого Wayback. Документ — снимка, с его адресом.
-        Internal::Wayback(url) => return open_web(&hosts::wayback_latest(url, ua)?, ua),
+        Internal::Wayback(url) => {
+            return open_web(
+                &hosts::wayback_latest(url, ua)?,
+                ua,
+                ocr_enabled,
+                model_parent,
+            );
+        }
         Internal::Archive(ArchivePage::List) => {
             ("Archive".to_owned(), archive::Archive::open().page())
         }
@@ -239,10 +275,15 @@ fn own_language(page: &Internal) -> Option<String> {
     matches!(page, Internal::History | Internal::Bookmarks).then(|| intro::LANG.to_owned())
 }
 
-fn open_web(url: &str, ua: UserAgent) -> Result<Document, Error> {
+fn open_web(
+    url: &str,
+    ua: UserAgent,
+    ocr_enabled: bool,
+    model_parent: Option<&Path>,
+) -> Result<Document, Error> {
     // `readable`, а не `fetch`: если страница объявила markdown-двойника,
     // читателю достаётся он — точный текст без извлечения.
-    let page = fetch::readable(url, ua)?;
+    let page = fetch::readable_with_ocr_model_dir(url, ua, ocr_enabled, model_parent)?;
     let address = Address::Web(page.url.clone());
 
     match page.kind {
@@ -415,7 +456,7 @@ fn open_repo(repo: &Repo, ua: UserAgent) -> Result<Document, Error> {
     if let Some(path) = &repo.path
         && repo::target(path) == repo::Target::Other
     {
-        return open_web(&repo.blob_url(path), ua);
+        return open_web(&repo.blob_url(path), ua, false, None);
     }
 
     let loaded = repo::open(repo, ua)?;

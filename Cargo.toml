@@ -47,6 +47,9 @@ images = ["dep:image", "dep:resvg"]
 # Сохранение статьи на диск: markdown, а с картинками — zip. Картинки тянет
 # за собой: в архив они ложатся байтами, а искать их адреса умеет `media`.
 save = ["dep:zip", "images"]
+# Local OCR is opt-in at runtime and linked only into builds that ship the
+# PDF OCR path. Tesseract's native source build requires Rust 1.92+.
+pdf-ocr = ["dep:pdfium-render", "dep:xberg-tesseract"]
 
 [dependencies]
 # Страница, что кодировку не назвала, — по статистике, как в Firefox (#32):
@@ -66,6 +69,7 @@ lz4_flex = { version = "0.14", default-features = false, features = ["std", "saf
 hyphenation = { version = "0.8", optional = true, default-features = false, features = ["embed_en-us"] }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"], optional = true }
 pdf-extract = { version = "0.12.1", default-features = false }
+pdfium-render = { version = "=0.9.5", default-features = false, features = ["pdfium_8125", "image_025", "thread_safe"], optional = true }
 resvg = { version = "0.48.1", optional = true }
 # Ленты RSS и Atom: разбор XML без зависимостей. Та же версия, что тянет `resvg`.
 roxmltree = "0.21"
@@ -73,6 +77,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "platform-verifier", "gzip", "brotli"] }
 url = "2.5.8"
 zip = { version = "9", default-features = false, features = ["deflate-flate2"], optional = true }
+xberg-tesseract = { version = "=1.3.10", default-features = false, features = ["static-linking"], optional = true }
 
 # Android: ядро едет в приложение общей библиотекой и разговаривает с ним
 # по JNI. Версию `jni` держим ту же, что тянет платформенный проверяющий

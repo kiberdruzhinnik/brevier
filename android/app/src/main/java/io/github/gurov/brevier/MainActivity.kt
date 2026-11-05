@@ -919,6 +919,9 @@ class MainActivity : Activity(), ArticleHost {
     }
 
     private fun open(tab: Tab, address: String, remember: Boolean, fresh: Boolean = false) {
+        if (tab.current() != address || fresh) {
+            tab.pdfVersions.clear()
+        }
         leaveReading(tab)
         // Предложить продолжить — только странице, открытой заново и без якоря (#19).
         tab.freshVisit = remember && !address.contains('#')
@@ -942,6 +945,7 @@ class MainActivity : Activity(), ArticleHost {
         }
 
         tab.loading = true
+        tab.loadingStage = LoadingStage.NETWORK_FETCHING
         tab.shown = null
         tab.title = "Loading…"
         sync()
@@ -951,7 +955,14 @@ class MainActivity : Activity(), ArticleHost {
             val result = try {
                 val useSharedCache = sharedMarkdownFolder.enabled
                 val cachedMarkdown = if (useSharedCache && !fresh) sharedMarkdownFolder.read(address) else null
-                val response = Core.open(address, fresh, useSharedCache, cachedMarkdown)
+                val response = Core.open(
+                    address,
+                    fresh,
+                    useSharedCache,
+                    cachedMarkdown,
+                    false,
+                    null,
+                )
                 val record = response.optString("sharedMarkdown").takeIf { it.isNotEmpty() && it != "null" }
                 val writeFailed = useSharedCache && response.optBoolean("ok") && record != null &&
                     !sharedMarkdownFolder.write(address, record)
@@ -988,7 +999,8 @@ class MainActivity : Activity(), ArticleHost {
     private fun tickLoading(tab: Tab, generation: Long, dots: Int) {
         if (tab.generation != generation || !tab.loading) return
         tab.dots = dots
-        tab.view?.show(message("Loading" + ".".repeat(dots)), metrics(), theme, eager = false)
+        tab.current()?.let { address -> tab.loadingStage = Core.loadingStage(address) }
+        tab.view?.show(message("${tab.loadingStage}${".".repeat(dots)}"), metrics(), theme, eager = false)
         main.postDelayed({ tickLoading(tab, generation, dots % LOADING_DOTS + 1) }, 350)
     }
 
@@ -1025,7 +1037,10 @@ class MainActivity : Activity(), ArticleHost {
                 // Заметки (#39) — у ядра, на каждый показ: их могли оставить
                 // в другой вкладке на той же странице. До показа: по ним
                 // режется колонка под карточки (#42).
-                view.show(shown.page, metrics(), theme, eager = images && shown.ok, offer = shown.offer, ways = shown.ways, address = shown.address)
+                view.show(
+                    shown.page, metrics(), theme, eager = images && shown.ok,
+                    offer = shown.offer, ways = shown.ways, address = shown.address,
+                )
                 val resume = tab.resume
                 tab.resume = null
                 val anchor = if (tab.anchorPending) shown.anchor?.let { shown.page.anchor(it) } else null
@@ -1035,7 +1050,7 @@ class MainActivity : Activity(), ArticleHost {
                     anchor != null -> view.settle(anchor, ANCHOR_ALIGN)
                 }
             }
-            tab.loading || tab.pending -> view.show(message("Loading" + ".".repeat(tab.dots)), metrics(), theme, eager = false)
+            tab.loading || tab.pending -> view.show(message("${tab.loadingStage}${".".repeat(tab.dots)}"), metrics(), theme, eager = false)
             tab.current() == null -> {
                 // У ядра, на каждый показ: наверху недавнее из журнала, а он растёт.
                 val intro = Core.intro()
@@ -1054,6 +1069,13 @@ class MainActivity : Activity(), ArticleHost {
         tab.loading = false
         tab.shown = loaded
         tab.title = loaded.title.ifEmpty { loaded.address }
+        if (loaded.isPdf && loaded.pdfOcr) {
+            tab.pdfVersions.openedRecognized(loaded)
+        } else if (loaded.isPdf) {
+            tab.pdfVersions.openedRegular(loaded)
+        } else {
+            tab.pdfVersions.clear()
+        }
         tab.anchorPending = true
         render(tab)
         if (tab == currentTab()) {
@@ -1071,6 +1093,66 @@ class MainActivity : Activity(), ArticleHost {
         sync()
         rememberSession()
         strip.invalidate()
+    }
+
+    fun recognizePdf() {
+        val tab = currentTab() ?: return
+        val regular = tab.pdfVersions.regular ?: tab.shown?.takeIf { it.isPdf && !it.pdfOcr } ?: return
+        if (tab.loading) return
+        tab.pdfVersions.openedRegular(regular)
+        val address = regular.address
+        val generation = ++tab.generation
+        tab.resume = tab.view?.place()
+        tab.loading = true
+        tab.loadingStage = LoadingStage.NETWORK_FETCHING
+        tab.shown = null
+        tab.title = "Loading OCR…"
+        render(tab)
+        sync()
+        tickLoading(tab, generation, 1)
+
+        App.work.execute {
+            val loaded = try {
+                val response = Core.open(
+                    address,
+                    fresh = true,
+                    sharedCache = false,
+                    sharedMarkdown = null,
+                    pdfOcr = true,
+                    pdfOcrModelDir = File(cacheDir, "pdf-ocr").absolutePath,
+                )
+                Loaded.of(response, address, pdfOcr = true)
+            } catch (_: Throwable) {
+                null
+            }
+            main.post {
+                if (tab.generation != generation || tab !in tabs) return@post
+                if (loaded?.ok == true && loaded.isPdf) {
+                    showDocument(tab, loaded)
+                } else {
+                    tab.loading = false
+                    tab.shown = regular
+                    tab.title = regular.title
+                    tab.resume?.let { tab.view?.settle(it, 0f) }
+                    tab.resume = null
+                    render(tab)
+                    sync()
+                    notice("OCR could not read this PDF page; regular text is still shown")
+                }
+            }
+        }
+    }
+
+    fun restorePdfText() {
+        val tab = currentTab() ?: return
+        val regular = tab.pdfVersions.restoreRegular() ?: return
+        if (tab.loading) return
+        tab.shown = regular
+        tab.title = regular.title
+        tab.resume?.let { tab.view?.settle(it, 0f) }
+        tab.resume = null
+        render(tab)
+        sync()
     }
 
     /** Перерисовать видимую вкладку под новую ступень или тему, не теряя места чтения. */
@@ -1832,6 +1914,11 @@ class MainActivity : Activity(), ArticleHost {
             else shareAddress(target, tab?.title ?: "")
         }
         menu.item("Reload") { reload() }
+        shown?.let { pdfTextMenuActionLabel(it.isPdf, it.pdfOcr)?.let { label ->
+            menu.item(label) {
+                if (tab?.shown?.pdfOcr == true) restorePdfText() else recognizePdf()
+            }
+        } }
         // Отчёт — новой вкладкой: его читают рядом со страницей, а не вместо неё.
         menu.item("Check this page") {
             val target = tab?.shown?.check
