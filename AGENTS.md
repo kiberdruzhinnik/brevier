@@ -87,6 +87,46 @@ Say in the pull request which of these you did and what you saw:
 - **A new host rule:** a test against the host's real markup — a saved page in
   `tests/fixtures/`, or the parts the rule reads, condensed in the test.
 
+## Android on the maintainer machine
+
+Use the Android toolchain already installed for this repository; do not accept the
+system-default Java version without checking it. The maintainer machine has JDK 17 at
+`/usr/lib/jvm/java-17-openjdk-amd64` and the Android SDK at `~/Android/Sdk` (capital
+`Sdk`). Before running Gradle, set the environment explicitly:
+
+```sh
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+export ANDROID_HOME="$HOME/Android/Sdk"
+export ANDROID_SDK_ROOT="$ANDROID_HOME"
+export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+```
+
+Confirm `java -version` reports 17. The app's `ndkVersion` in
+`android/app/build.gradle.kts` is authoritative; use that NDK under the SDK if setting
+`ANDROID_NDK_HOME` manually. Do not replace these paths with guesses such as
+`~/Android/sdk`.
+
+For Android app changes, attempt to run the app on the configured Android emulator and
+inspect the changed behavior. Discover available AVDs with
+`"$ANDROID_HOME/emulator/emulator" -list-avds`; use the existing Brevier AVD when
+available. Do not refuse emulator testing without checking the emulator binary, AVD,
+ADB, and KVM access first. If this execution environment does not expose `/dev/kvm` or
+hardware acceleration, report that concrete limitation and its observed effect, then
+complete any feasible build or emulator checks. Do not claim the app was tested on an
+emulator unless it was actually launched and inspected.
+
+After each code or Android change, build a fresh signed release APK with
+`cd android && ./gradlew assembleRelease` using the environment above, then provide the
+APK path to the maintainer. The signing properties file is at
+`~/Android/keys/brevier-signing.properties`; set `BREVIER_SIGNING` to that path for the
+Gradle invocation. The resulting APK is under `android/app/build/outputs/apk/release/`
+and its name includes the app version and `arm64`. If the signed build fails, report the
+actual blocker and provide the release build result; do not silently substitute an
+unsigned APK. Treat all signing material as secret: never read out, print, log, copy into
+the repository, or include in chat the properties contents, passwords, private key,
+keystore contents, or other credentials. Refer only to the properties file path when
+describing signing setup.
+
 ## Conventions
 
 - **English on GitHub**: commits, pull requests, issues. A commit subject is a plain
