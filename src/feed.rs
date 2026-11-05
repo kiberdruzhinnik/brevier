@@ -779,9 +779,20 @@ pub fn thread(feed: &Feed) -> Option<Thread> {
 /// подводка абзацем; записи — заголовки второго уровня, поэтому полка
 /// показывает их оглавлением. Лента обсуждения — тред (см. [`thread`]).
 pub fn to_markdown(feed: &Feed) -> String {
+    render_markdown(feed, None)
+}
+
+/// Public cloud folder entries are navigation, not feed headlines. The source
+/// URL distinguishes those generated listings from ordinary site feeds.
+pub fn to_markdown_with_source(feed: &Feed, source_url: &str) -> String {
+    render_markdown(feed, Some(source_url))
+}
+
+fn render_markdown(feed: &Feed, source_url: Option<&str>) -> String {
     if let Some(thread) = thread(feed) {
         return thread_markdown(feed, &thread);
     }
+    let regular_links = source_url.is_some_and(is_public_cloud_share);
     let mut out = format!("# {}\n\n", heading(&feed.title));
 
     let mut about = Vec::new();
@@ -809,13 +820,16 @@ pub fn to_markdown(feed: &Feed) -> String {
             .or_else(|| entry.summary.as_deref().map(lead))
             .or_else(|| entry.date.clone())
             .unwrap_or_else(|| "Untitled".to_owned());
-        match &entry.link {
-            Some(link) => out.push_str(&format!(
+        match (&entry.link, regular_links) {
+            (Some(link), true) => {
+                out.push_str(&format!("[{}]({})\n\n", heading(&title), destination(link)))
+            }
+            (Some(link), false) => out.push_str(&format!(
                 "## [{}]({})\n\n",
                 heading(&title),
                 destination(link)
             )),
-            None => out.push_str(&format!("## {}\n\n", heading(&title))),
+            (None, _) => out.push_str(&format!("## {}\n\n", heading(&title))),
         }
 
         let meta: Vec<String> = [&entry.date, &entry.author]
@@ -837,6 +851,23 @@ pub fn to_markdown(feed: &Feed) -> String {
     out.truncate(out.trim_end().len());
     out.push('\n');
     out
+}
+
+fn is_public_cloud_share(url: &str) -> bool {
+    let Ok(url) = Url::parse(url) else {
+        return false;
+    };
+    if url.scheme() != "https" {
+        return false;
+    }
+    match url.host_str() {
+        Some("cloud.mail.ru") => url.path().starts_with("/public/"),
+        Some("disk.yandex.ru") => {
+            let mut parts = url.path_segments().into_iter().flatten();
+            matches!(parts.next(), Some("d" | "i")) && parts.next().is_some()
+        }
+        _ => false,
+    }
 }
 
 /// Тред markdown-ом: пост целиком, дальше реплики — автор, дата ссылкой
@@ -1228,6 +1259,27 @@ mod tests {
         assert_eq!(block("- not a list"), "\\- not a list");
         assert_eq!(heading("C#"), "C\\#");
         assert_eq!(destination("https://e.org/a (b)"), "<https://e.org/a (b)>");
+    }
+
+    #[test]
+    fn public_cloud_folder_entries_are_regular_links() {
+        let atom = r#"<feed xmlns="http://www.w3.org/2005/Atom"><title>Folder</title>
+            <entry><title>Book</title><link href="https://disk.yandex.ru/d/share?path=%2FBook" /></entry>
+        </feed>"#;
+        for source in [
+            "https://cloud.mail.ru/public/share/folder",
+            "https://disk.yandex.ru/d/share",
+        ] {
+            let feed = parse(atom, source).unwrap();
+            let markdown = to_markdown_with_source(&feed, source);
+            assert!(markdown.starts_with("# Folder\n\n"));
+            assert!(markdown.contains("[Book](https://disk.yandex.ru/d/share?path=%2FBook)"));
+            assert!(!markdown.contains("## [Book]"));
+        }
+
+        let ordinary = parse(atom, "https://example.org/feed").unwrap();
+        let markdown = to_markdown_with_source(&ordinary, "https://example.org/feed");
+        assert!(markdown.contains("## [Book](https://disk.yandex.ru/d/share?path=%2FBook)"));
     }
 
     const JSON_FEED: &str = r#"{

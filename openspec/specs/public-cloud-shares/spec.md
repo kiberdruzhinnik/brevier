@@ -7,11 +7,11 @@ Lets readers browse public cloud-drive folders and read supported public PDF fil
 ## Requirements
 
 ### Requirement: Public Yandex Disk folders are readable listings
-Brevier SHALL render an accessible public Yandex Disk folder as a listing of links to every shared entry, including subfolders, collecting all API pages without executing JavaScript or holding credentials.
+Brevier SHALL render an accessible public Yandex Disk folder as a listing of links to every shared entry, including subfolders, collecting all API pages without executing JavaScript or holding credentials. Entry links SHALL use regular text size rather than heading size.
 
 #### Scenario: Open a public folder
 - **WHEN** a reader opens an accessible public Yandex Disk folder share
-- **THEN** Brevier shows the folder entries as links
+- **THEN** Brevier shows the folder entries as links at regular text size
 
 #### Scenario: Follow an entry in a nested folder
 - **WHEN** a reader follows a folder or file link from a public folder listing
@@ -19,7 +19,7 @@ Brevier SHALL render an accessible public Yandex Disk folder as a listing of lin
 
 #### Scenario: List a folder with more entries than one API page
 - **WHEN** an accessible public Yandex Disk folder contains more entries than the API's default page size
-- **THEN** Brevier shows a link for every entry across all API pages
+- **THEN** Brevier shows a regular text size link for every entry across all API pages
 
 #### Scenario: A later page cannot be loaded
 - **WHEN** Brevier cannot load or validate a later page of an accessible public Yandex Disk folder
@@ -99,11 +99,11 @@ Brevier SHALL preserve its existing unsupported-content and extraction-error beh
 - **THEN** Brevier reports an existing access, unsupported-content, or extraction error without requesting credentials
 
 ### Requirement: Public Cloud Mail folders are readable listings
-Brevier SHALL render an accessible public Cloud Mail folder as a listing of links to its shared entries, including subfolders, without executing JavaScript or holding credentials.
+Brevier SHALL render an accessible public Cloud Mail folder as a listing of links to its shared entries, including subfolders, without executing JavaScript or holding credentials. Entry links SHALL use regular text size rather than heading size.
 
 #### Scenario: Open a public folder
 - **WHEN** a reader opens an accessible public Cloud Mail folder share
-- **THEN** Brevier shows the folder entries as links
+- **THEN** Brevier shows the folder entries as links at regular text size
 
 #### Scenario: Follow an entry in a nested folder
 - **WHEN** a reader follows a folder or file link from a public Cloud Mail folder listing

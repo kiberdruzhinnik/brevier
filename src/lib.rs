@@ -338,7 +338,7 @@ pub fn from_feed(xml: &str, url: &str) -> Result<Document, Error> {
     Ok(Document {
         address: Address::Web(url.to_owned()),
         title,
-        markdown: feed::to_markdown(&parsed),
+        markdown: feed::to_markdown_with_source(&parsed, url),
         kind: if thread.is_some() {
             Kind::Article
         } else {
